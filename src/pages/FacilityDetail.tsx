@@ -1,14 +1,60 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Layout from '../components/Layout';
-import { FACILITIES, CATEGORIES } from '../data/facilities';
+import { getFacility, type Facility } from '../lib/api';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  electronics: 'Electronics',
+  computing_ai: 'Computing & AI',
+  energy: 'Energy',
+  chemical: 'Chemical',
+  innovation: 'Innovation',
+  mechanical: 'Mechanical',
+  general: 'General',
+};
 
 export default function FacilityDetail() {
   const { id } = useParams();
+  const [facility, setFacility] = useState<Facility | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [requested, setRequested] = useState(false);
-  const facility = FACILITIES.find((f) => f.id === Number(id));
 
-  if (!facility) {
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    getFacility(Number(id))
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) setError('not_found');
+        else setFacility(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message ?? 'Failed to load facility');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <Layout>
+        <div className="py-32 text-center">
+          <span className="label">Loading…</span>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (error === 'not_found' || !facility) {
     return (
       <Layout>
         <div className="py-24 text-center">
@@ -22,7 +68,7 @@ export default function FacilityDetail() {
     );
   }
 
-  const category = CATEGORIES.find((c) => c.id === facility.category);
+  const categoryLabel = CATEGORY_LABELS[facility.category] ?? facility.category;
 
   return (
     <Layout>
@@ -36,7 +82,7 @@ export default function FacilityDetail() {
         <div className="flex items-center gap-3 mb-6">
           <span className="label label-accent num">{facility.code}</span>
           <span className="w-6 h-px bg-[var(--color-rule)]" />
-          <span className="label">{category?.name}</span>
+          <span className="label">{categoryLabel}</span>
         </div>
         <h1 className="text-3xl md:text-4xl leading-tight max-w-3xl">
           {facility.name}
@@ -123,12 +169,24 @@ export default function FacilityDetail() {
                 </div>
                 <div className="flex items-center justify-between">
                   <dt className="text-[var(--color-ink-3)]">Category</dt>
-                  <dd>{category?.name}</dd>
+                  <dd>{categoryLabel}</dd>
                 </div>
                 <div className="flex items-center justify-between">
                   <dt className="text-[var(--color-ink-3)]">Equipment</dt>
                   <dd className="num">{facility.equipment.length}</dd>
                 </div>
+                {facility.location && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-[var(--color-ink-3)]">Location</dt>
+                    <dd className="text-right">{facility.location}</dd>
+                  </div>
+                )}
+                {facility.open_hours && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-[var(--color-ink-3)]">Hours</dt>
+                    <dd className="num">{facility.open_hours}</dd>
+                  </div>
+                )}
               </dl>
             </div>
           </aside>

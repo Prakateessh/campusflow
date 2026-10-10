@@ -1,24 +1,55 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
-import { FACILITIES, CATEGORIES, type CategoryId } from '../data/facilities';
+import { getFacilities, type Facility } from '../lib/api';
+
+const CATEGORIES = [
+  { id: 'electronics',  name: 'Electronics' },
+  { id: 'computing_ai', name: 'Computing & AI' },
+  { id: 'energy',       name: 'Energy' },
+  { id: 'chemical',     name: 'Chemical' },
+  { id: 'innovation',   name: 'Innovation' },
+  { id: 'mechanical',   name: 'Mechanical' },
+  { id: 'general',      name: 'General' },
+];
 
 export default function Facilities() {
-  const [activeCategory, setActiveCategory] = useState<CategoryId | 'all'>('all');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
   const [query, setQuery] = useState('');
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    return FACILITIES.filter((f) => {
-      const matchesCategory = activeCategory === 'all' || f.category === activeCategory;
-      const q = query.trim().toLowerCase();
-      const matchesQuery =
-        q === '' ||
-        f.name.toLowerCase().includes(q) ||
-        f.code.toLowerCase().includes(q) ||
-        f.description.toLowerCase().includes(q);
-      return matchesCategory && matchesQuery;
-    });
+  // Fetch from API whenever filters change
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    const params: { category?: string; q?: string } = {};
+    if (activeCategory !== 'all') params.category = activeCategory;
+    if (query.trim()) params.q = query.trim();
+
+    getFacilities(params)
+      .then((data) => {
+        if (!cancelled) setFacilities(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message ?? 'Failed to load facilities');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeCategory, query]);
+
+  const categoryName = useMemo(
+    () => (id: string) => CATEGORIES.find((c) => c.id === id)?.name ?? id,
+    [],
+  );
 
   return (
     <Layout>
@@ -30,7 +61,7 @@ export default function Facilities() {
             <h1 className="text-2xl md:text-3xl">Facilities</h1>
           </div>
           <span className="label num">
-            {String(filtered.length).padStart(2, '0')} / {FACILITIES.length}
+            {loading ? '···' : `${String(facilities.length).padStart(2, '0')} shown`}
           </span>
         </div>
       </section>
@@ -72,6 +103,14 @@ export default function Facilities() {
 
       {/* LIST */}
       <section className="pb-24">
+        {error && (
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
+            <span className="text-[13px] text-[var(--color-accent)]">
+              {error}
+            </span>
+          </div>
+        )}
+
         <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
           <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
             <span className="col-span-1 label">Code</span>
@@ -81,9 +120,16 @@ export default function Facilities() {
           </div>
 
           <div className="divide-y divide-[var(--color-rule)]">
-            {filtered.map((f) => {
-              const cat = CATEGORIES.find((c) => c.id === f.category);
-              return (
+            {loading ? (
+              <div className="py-24 text-center">
+                <span className="label">Loading…</span>
+              </div>
+            ) : facilities.length === 0 ? (
+              <div className="py-24 text-center">
+                <span className="label">No facilities match your filters</span>
+              </div>
+            ) : (
+              facilities.map((f) => (
                 <Link
                   key={f.id}
                   to={`/facilities/${f.id}`}
@@ -92,22 +138,16 @@ export default function Facilities() {
                   <span className="md:col-span-1 label num">{f.code}</span>
                   <span className="md:col-span-6 text-[16px]">{f.name}</span>
                   <span className="md:col-span-3 text-[15px] text-[var(--color-ink-3)]">
-                    {cat?.name}
+                    {categoryName(f.category)}
                   </span>
                   <span className="md:col-span-2 md:text-right text-[var(--color-ink-4)]">
                     →
                   </span>
                 </Link>
-              );
-            })}
+              ))
+            )}
           </div>
         </div>
-
-        {filtered.length === 0 && (
-          <div className="py-24 text-center">
-            <span className="label">No facilities match your filters</span>
-          </div>
-        )}
       </section>
     </Layout>
   );
