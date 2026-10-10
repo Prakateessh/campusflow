@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { useAuth } from '../lib/auth';
 import { getRequests, type RequestListItem } from '../lib/api';
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
-  submitted: 'Submitted',
-  pending_approval: 'Pending',
+  submitted: 'Awaiting sponsor',
+  pending_approval: 'Awaiting technician',
   approved: 'Approved',
   rejected: 'Rejected',
   scheduled: 'Scheduled',
@@ -14,19 +15,22 @@ const STATUS_LABEL: Record<string, string> = {
   completed: 'Completed',
   cancelled: 'Cancelled',
   overdue: 'Overdue',
-  ready: 'Ready',
 };
 
 export default function Requests() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState<RequestListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
 
   useEffect(() => {
+    if (!user) return;
     let cancelled = false;
     setLoading(true);
-    getRequests({ user_id: 8 })
+    setError(null);
+
+    getRequests({ user_id: user.id })
       .then((data) => {
         if (!cancelled) setRequests(data);
       })
@@ -36,28 +40,28 @@ export default function Requests() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user]);
 
-  const filtered = useMemo(
-    () =>
-      filter === 'all'
-        ? requests
-        : requests.filter((r) => {
-            if (filter === 'pending') return r.status === 'pending_approval' || r.status === 'submitted';
-            if (filter === 'approved') return r.status === 'approved' || r.status === 'scheduled';
-            return r.status === filter;
-          }),
-    [requests, filter],
-  );
+  const filtered = useMemo(() => {
+    if (filter === 'all') return requests;
+    if (filter === 'pending') {
+      return requests.filter((r) => ['submitted', 'pending_approval'].includes(r.status));
+    }
+    if (filter === 'approved') {
+      return requests.filter((r) => ['approved', 'scheduled', 'in_progress'].includes(r.status));
+    }
+    return requests.filter((r) => r.status === filter);
+  }, [requests, filter]);
 
   const counts = useMemo(
     () => ({
       all: requests.length,
-      pending: requests.filter((r) => r.status === 'pending_approval' || r.status === 'submitted').length,
-      approved: requests.filter((r) => r.status === 'approved' || r.status === 'scheduled').length,
+      pending: requests.filter((r) => ['submitted', 'pending_approval'].includes(r.status)).length,
+      approved: requests.filter((r) => ['approved', 'scheduled', 'in_progress'].includes(r.status)).length,
       completed: requests.filter((r) => r.status === 'completed').length,
       rejected: requests.filter((r) => r.status === 'rejected').length,
     }),
@@ -65,8 +69,8 @@ export default function Requests() {
   );
 
   const statusStyle = (s: string) => {
-    if (s === 'ready' || s === 'scheduled') return 'label label-accent';
-    if (s === 'pending_approval' || s === 'submitted') return 'label label-ink';
+    if (s === 'approved' || s === 'scheduled' || s === 'ready') return 'label label-accent';
+    if (s === 'submitted' || s === 'pending_approval') return 'label label-ink';
     return 'label';
   };
 
@@ -89,7 +93,7 @@ export default function Requests() {
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
+            <span className="section-rule" />
             <h1 className="text-2xl md:text-3xl">My requests</h1>
           </div>
           <span className="label num">
@@ -126,7 +130,7 @@ export default function Requests() {
           <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
             <span className="col-span-2 label">ID</span>
             <span className="col-span-5 label">Request</span>
-            <span className="col-span-3 label">Facility</span>
+            <span className="col-span-3 label">Lab</span>
             <span className="col-span-2 label text-right">Status</span>
           </div>
 
@@ -137,7 +141,7 @@ export default function Requests() {
               </div>
             ) : filtered.length === 0 ? (
               <div className="py-24 text-center">
-                <span className="label">No requests match this filter</span>
+                <span className="label">No requests yet</span>
               </div>
             ) : (
               filtered.map((r) => (

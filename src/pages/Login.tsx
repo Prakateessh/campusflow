@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../lib/auth';
+import { useAuth, getUsers, type DirectoryUser } from '../lib/auth';
+
+const ROLE_LABEL: Record<string, string> = {
+  student: 'Student',
+  faculty: 'Faculty',
+  technician: 'Technician',
+  service_provider: 'Service Provider',
+  admin: 'Admin',
+};
 
 export default function Login() {
   const navigate = useNavigate();
@@ -11,12 +19,35 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showAccounts, setShowAccounts] = useState(false);
+  const [directory, setDirectory] = useState<DirectoryUser[]>([]);
+  const [directoryLoading, setDirectoryLoading] = useState(false);
 
   const from = (location.state as { from?: string })?.from ?? '/';
 
   useEffect(() => {
     if (user) navigate(from, { replace: true });
   }, [user, from, navigate]);
+
+  // Lazy-load the directory only when the user expands the section
+  useEffect(() => {
+    if (!showAccounts || directory.length > 0) return;
+    let cancelled = false;
+    setDirectoryLoading(true);
+
+    getUsers()
+      .then((users) => {
+        if (!cancelled) setDirectory(users);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setDirectoryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showAccounts, directory.length]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +74,7 @@ export default function Login() {
     setEmail(demoEmail);
     setPassword('demo');
     setError('');
+    setShowAccounts(false);
   };
 
   return (
@@ -112,31 +144,57 @@ export default function Login() {
           </form>
 
           <div className="mt-10 pt-8 border-t border-[var(--color-rule)]">
-            <span className="label">Demo accounts</span>
-            <p className="mt-2 text-[12px] text-[var(--color-ink-4)] leading-relaxed">
-              Password for all: <code className="text-[var(--color-ink-3)]">demo</code>
-            </p>
-            <div className="mt-4 space-y-2">
-              {[
-                { email: 'ashwin@cb.amrita.edu', label: 'Ashwin · Student (CSE)' },
-                { email: 'divya@cb.amrita.edu',  label: 'Divya · Student (ECE)' },
-                { email: 'priya@cb.amrita.edu',  label: 'Dr. Priya Nair · Faculty' },
-                { email: 'suresh@cb.amrita.edu', label: 'Suresh M. · Technician' },
-                { email: 'admin@cb.amrita.edu',  label: 'Admin' },
-              ].map((acc) => (
-                <button
-                  key={acc.email}
-                  type="button"
-                  onClick={() => fillDemo(acc.email)}
-                  className="w-full text-left px-3 py-2 border border-[var(--color-rule)] hover:border-[var(--color-accent)] transition-colors flex items-center justify-between group"
-                >
-                  <span className="text-[13px]">{acc.label}</span>
-                  <span className="text-[11px] text-[var(--color-ink-4)] group-hover:text-[var(--color-accent)] transition-colors">
-                    Use
-                  </span>
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowAccounts((s) => !s)}
+              className="w-full flex items-center justify-between text-left"
+            >
+              <span className="label">Demo accounts</span>
+              <span className="text-[12px] text-[var(--color-ink-4)]">
+                {showAccounts ? '−' : '+'}
+              </span>
+            </button>
+
+            {showAccounts && (
+              <div className="mt-4 space-y-2">
+                <p className="text-[12px] text-[var(--color-ink-4)] leading-relaxed mb-3">
+                  Password for all accounts: <code className="text-[var(--color-ink-3)]">demo</code>
+                </p>
+
+                {directoryLoading && (
+                  <div className="py-4 text-center">
+                    <span className="label">Loading…</span>
+                  </div>
+                )}
+
+                {!directoryLoading && directory.length === 0 && (
+                  <div className="py-4 text-center">
+                    <span className="label">No accounts available</span>
+                  </div>
+                )}
+
+                {directory.map((acc) => (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => fillDemo(acc.email)}
+                    className="w-full text-left px-3 py-2 border border-[var(--color-rule)] hover:border-[var(--color-accent)] transition-colors flex items-center justify-between group"
+                  >
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[13px] truncate">
+                        {acc.name} · {ROLE_LABEL[acc.role] ?? acc.role}
+                      </span>
+                      <span className="text-[11px] text-[var(--color-ink-4)] num truncate">
+                        {acc.email}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-[var(--color-ink-4)] group-hover:text-[var(--color-accent)] transition-colors shrink-0 ml-3">
+                      Use
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

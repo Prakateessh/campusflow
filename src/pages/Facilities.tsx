@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { getFacilities, type Facility } from '../lib/api';
@@ -10,7 +10,6 @@ const CATEGORIES = [
   { id: 'chemical',     name: 'Chemical' },
   { id: 'innovation',   name: 'Innovation' },
   { id: 'mechanical',   name: 'Mechanical' },
-  { id: 'general',      name: 'General' },
 ];
 
 export default function Facilities() {
@@ -20,7 +19,6 @@ export default function Facilities() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch from API whenever filters change
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -46,19 +44,16 @@ export default function Facilities() {
     };
   }, [activeCategory, query]);
 
-  const categoryName = useMemo(
-    () => (id: string) => CATEGORIES.find((c) => c.id === id)?.name ?? id,
-    [],
-  );
+  const categoryName = (id: string) =>
+    CATEGORIES.find((c) => c.id === id)?.name ?? id;
 
   return (
     <Layout>
-      {/* HEADING */}
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
-            <h1 className="text-2xl md:text-3xl">Facilities</h1>
+            <span className="section-rule" />
+            <h1 className="text-2xl md:text-3xl">Labs</h1>
           </div>
           <span className="label num">
             {loading ? '···' : `${String(facilities.length).padStart(2, '0')} shown`}
@@ -66,7 +61,6 @@ export default function Facilities() {
         </div>
       </section>
 
-      {/* FILTERS */}
       <section className="pb-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
           <div className="flex flex-wrap gap-2">
@@ -101,20 +95,17 @@ export default function Facilities() {
         </div>
       </section>
 
-      {/* LIST */}
       <section className="pb-24">
         {error && (
           <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
-            <span className="text-[13px] text-[var(--color-accent)]">
-              {error}
-            </span>
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
           </div>
         )}
 
         <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
           <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
             <span className="col-span-1 label">Code</span>
-            <span className="col-span-6 label">Facility</span>
+            <span className="col-span-6 label">Lab</span>
             <span className="col-span-3 label">Category</span>
             <span className="col-span-2 label text-right">View</span>
           </div>
@@ -126,7 +117,7 @@ export default function Facilities() {
               </div>
             ) : facilities.length === 0 ? (
               <div className="py-24 text-center">
-                <span className="label">No facilities match your filters</span>
+                <span className="label">No labs match your filters</span>
               </div>
             ) : (
               facilities.map((f) => (

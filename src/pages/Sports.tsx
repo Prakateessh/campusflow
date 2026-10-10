@@ -1,161 +1,195 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { useAuth } from '../lib/auth';
 
-interface GearItem {
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
+
+interface Facility {
   id: number;
+  code: string;
   name: string;
-  sport: 'Badminton' | 'Cricket' | 'Tennis' | 'Football' | 'Basketball' | 'Athletics';
-  total: number;
-  available: number;
-  returnDays: number;
+  category: string;
+  kind: string;
   description: string;
-}
-
-const GEAR: GearItem[] = [
-  { id: 1,  name: 'Badminton Racket',        sport: 'Badminton',  total: 20, available: 12, returnDays: 1, description: 'Yonex GR-303, carbon frame, 85g' },
-  { id: 2,  name: 'Shuttlecock (tube of 6)', sport: 'Badminton',  total: 40, available: 30, returnDays: 0, description: 'Yonex Mavis 350, nylon' },
-  { id: 3,  name: 'Badminton Net',           sport: 'Badminton',  total: 4,  available: 3,  returnDays: 1, description: 'Tournament-grade, portable poles' },
-  { id: 4,  name: 'Cricket Bat',             sport: 'Cricket',    total: 8,  available: 5,  returnDays: 1, description: 'Kashmir willow, size SH' },
-  { id: 5,  name: 'Cricket Ball (leather)',  sport: 'Cricket',    total: 15, available: 10, returnDays: 1, description: 'Red leather, 156g, match grade' },
-  { id: 6,  name: 'Wicket Keeping Gloves',   sport: 'Cricket',    total: 4,  available: 2,  returnDays: 1, description: 'Padded palm, adult size' },
-  { id: 7,  name: 'Tennis Racket',           sport: 'Tennis',     total: 10, available: 6,  returnDays: 1, description: 'Wilson Pro Staff, 300g' },
-  { id: 8,  name: 'Tennis Ball (can of 3)',  sport: 'Tennis',     total: 30, available: 22, returnDays: 0, description: 'Wilson Championship, pressurised' },
-  { id: 9,  name: 'Football',                sport: 'Football',   total: 10, available: 6,  returnDays: 1, description: 'Nivia Storm, size 5, match' },
-  { id: 10, name: 'Goalkeeper Gloves',       sport: 'Football',   total: 4,  available: 3,  returnDays: 1, description: 'Latex palm, size L' },
-  { id: 11, name: 'Basketball',              sport: 'Basketball', total: 8,  available: 5,  returnDays: 1, description: 'Spalding NBA, size 7' },
-  { id: 12, name: 'Stopwatch',               sport: 'Athletics',  total: 12, available: 9,  returnDays: 1, description: 'Digital, split-timing, 1/100s' },
-  { id: 13, name: 'Measuring Tape (100m)',   sport: 'Athletics',  total: 3,  available: 2,  returnDays: 1, description: 'Fibreglass, wind-resistant' },
-  { id: 14, name: 'Discus',                  sport: 'Athletics',  total: 4,  available: 2,  returnDays: 1, description: '1kg, aluminium rim' },
-];
-
-type SportFilter = 'All' | GearItem['sport'];
-const SPORTS: SportFilter[] = ['All', 'Badminton', 'Cricket', 'Tennis', 'Football', 'Basketball', 'Athletics'];
-
-interface CartLine {
-  item: GearItem;
-  qty: number;
+  location: string;
+  open_hours: string | null;
 }
 
 export default function Sports() {
-  const [sport, setSport] = useState<SportFilter>('All');
-  const [cart, setCart] = useState<Record<number, number>>({});
-  const [pickupDate, setPickupDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [stage, setStage] = useState<'browse' | 'reserved'>('browse');
+  const { user } = useAuth();
 
-  const filtered = useMemo(
-    () => (sport === 'All' ? GEAR : GEAR.filter((g) => g.sport === sport)),
-    [sport],
-  );
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const cartLines: CartLine[] = useMemo(
-    () =>
-      Object.entries(cart)
-        .map(([id, qty]) => ({
-          item: GEAR.find((g) => g.id === Number(id))!,
-          qty,
-        }))
-        .filter((l) => l.qty > 0),
-    [cart],
-  );
+  // Modal state
+  const [activeFacility, setActiveFacility] = useState<Facility | null>(null);
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTime, setBookingTime] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const totalItems = cartLines.reduce((s, l) => s + l.qty, 0);
-  const totalReturnDays = cartLines.reduce((m, l) => Math.max(m, l.item.returnDays), 0);
+  // Success
+  const [success, setSuccess] = useState<{ request_id: number; facility: Facility; date: string; time: string } | null>(null);
 
-  const add = (id: number) =>
-    setCart((c) => {
-      const item = GEAR.find((g) => g.id === id)!;
-      const cur = c[id] ?? 0;
-      if (cur >= item.available) return c;
-      return { ...c, [id]: cur + 1 };
-    });
+  // Fetch sports facilities
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
 
-  const remove = (id: number) =>
-    setCart((c) => {
-      const next = { ...c };
-      if (!next[id]) return c;
-      next[id] -= 1;
-      if (next[id] <= 0) delete next[id];
-      return next;
-    });
+    fetch(`${API_BASE}/api/facilities?kind=sports`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setFacilities(data.facilities ?? []);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-  const submitReservation = () => setStage('reserved');
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const resetReservation = () => {
-    setCart({});
-    setStage('browse');
+  const openBooking = (facility: Facility) => {
+    setActiveFacility(facility);
+    setBookingDate(new Date().toISOString().slice(0, 10));
+    setBookingTime('06:00');
+    setConfirmed(false);
+    setFormError(null);
   };
 
-  // ═══════════════════════════════════════════════════════════════
-  // RESERVED STATE
-  // ═══════════════════════════════════════════════════════════════
-  if (stage === 'reserved') {
-    const returnDate = (() => {
-      const d = new Date(pickupDate);
-      d.setDate(d.getDate() + (totalReturnDays || 1));
-      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-    })();
+  const closeModal = () => {
+    setActiveFacility(null);
+    setFormError(null);
+    setConfirmed(false);
+  };
 
+  const submitBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !activeFacility) return;
+    setFormError(null);
+
+    if (!bookingDate) {
+      setFormError('Select a date.');
+      return;
+    }
+    if (!bookingTime) {
+      setFormError('Select a start time.');
+      return;
+    }
+    if (!confirmed) {
+      setFormError('Confirm the booking.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const [h, m] = bookingTime.split(':').map(Number);
+      const endH = (h + 1) % 24;
+      const start = `${bookingDate} ${bookingTime}:00`;
+      const end = `${bookingDate} ${String(endH).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+
+      const res = await fetch(`${API_BASE}/api/requests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'sports',
+          requester_id: user.id,
+          facility_id: activeFacility.id,
+          title: `${activeFacility.name} — 1 hour session`,
+          scheduled_start: start,
+          scheduled_end: end,
+          items: [],
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Booking failed');
+      }
+
+      const data = await res.json();
+      setSuccess({
+        request_id: data.request_id,
+        facility: activeFacility,
+        date: bookingDate,
+        time: bookingTime,
+      });
+      closeModal();
+    } catch (err: any) {
+      setFormError(err.message ?? 'Booking failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ════════ SUCCESS SCREEN ════════
+  if (success) {
     return (
       <Layout>
         <section className="pt-14 pb-12">
           <div className="flex items-center gap-3 mb-6">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
-            <span className="label label-accent">Reservation confirmed</span>
+            <span className="section-rule" />
+            <span className="label label-accent">Booked</span>
           </div>
-          <h1 className="text-3xl md:text-4xl leading-tight">Gear reserved.</h1>
+          <h1 className="text-3xl md:text-4xl leading-tight">
+            {success.facility.name} reserved.
+          </h1>
           <p className="mt-4 text-[15px] text-[var(--color-ink-2)] max-w-xl leading-relaxed">
-            Collect from the Sports Complex counter. Bring your student ID. Return
-            by the date below to avoid penalty.
+            Bring your student ID. Your session is scheduled for the slot below.
           </p>
         </section>
 
         <section className="pb-24">
           <div className="grid grid-cols-12 gap-10">
-
             <div className="col-span-12 lg:col-span-7">
               <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
-                  <span className="label">Reservation</span>
-                  <span className="label num">SP-{Math.floor(1000 + Math.random() * 9000)}</span>
+                  <span className="label">Booking</span>
+                  <span className="label num">
+                    R-{String(success.request_id).padStart(4, '0')}
+                  </span>
                 </div>
-
-                <div className="grid grid-cols-2 divide-x divide-[var(--color-rule)]">
-                  <div className="px-6 py-6">
-                    <span className="label">Pickup</span>
-                    <div className="mt-3 font-display text-2xl num leading-none">
-                      {new Date(pickupDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                <dl className="divide-y divide-[var(--color-rule)]">
+                  <div className="flex items-center justify-between px-6 py-4">
+                    <dt className="label">Facility</dt>
+                    <dd className="text-[15px]">{success.facility.name}</dd>
+                  </div>
+                  <div className="flex items-center justify-between px-6 py-4">
+                    <dt className="label">Date</dt>
+                    <dd className="text-[15px] num">{success.date}</dd>
+                  </div>
+                  <div className="flex items-center justify-between px-6 py-4">
+                    <dt className="label">Start</dt>
+                    <dd className="text-[15px] num">{success.time}</dd>
+                  </div>
+                  {success.facility.location && (
+                    <div className="flex items-center justify-between px-6 py-4">
+                      <dt className="label">Location</dt>
+                      <dd className="text-[15px]">{success.facility.location}</dd>
                     </div>
-                  </div>
-                  <div className="px-6 py-6">
-                    <span className="label">Return by</span>
-                    <div className="mt-3 font-display text-2xl num leading-none">{returnDate}</div>
-                  </div>
-                </div>
-
-                <div className="px-6 py-6 border-t border-[var(--color-rule)]">
-                  <span className="label">Items</span>
-                  <ul className="mt-4 divide-y divide-[var(--color-rule)]">
-                    {cartLines.map((l) => (
-                      <li key={l.item.id} className="flex items-center justify-between py-3">
-                        <span className="text-[15px]">
-                          <span className="num text-[var(--color-ink-3)] mr-3">
-                            {String(l.qty).padStart(2, '0')}×
-                          </span>
-                          {l.item.name}
-                        </span>
-                        <span className="label">{l.item.sport}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                  )}
+                </dl>
               </div>
 
               <div className="mt-6 flex items-center gap-3">
-                <button onClick={resetReservation} className="btn btn-outline text-sm">
-                  Reserve more
+                <button
+                  onClick={() => setSuccess(null)}
+                  className="btn btn-outline text-sm"
+                >
+                  Book another
                 </button>
-                <Link to="/requests" className="btn-link text-sm">
+                <Link
+                  to={`/requests/${success.request_id}`}
+                  className="btn-link text-sm"
+                >
                   View in requests →
                 </Link>
               </div>
@@ -163,19 +197,11 @@ export default function Sports() {
 
             <aside className="col-span-12 lg:col-span-5">
               <div className="border-t border-[var(--color-rule)] pt-6">
-                <span className="label">Pickup location</span>
-                <p className="mt-3 text-[15px] text-[var(--color-ink-2)] leading-relaxed">
-                  Sports Complex counter<br />
-                  Open 06:00 – 21:00 · Bring student ID
-                </p>
-              </div>
-
-              <div className="border-t border-[var(--color-rule)] pt-6 mt-8">
-                <span className="label">Policy</span>
+                <span className="label">Note</span>
                 <ul className="mt-3 space-y-2 text-[14px] text-[var(--color-ink-2)] leading-relaxed">
-                  <li>· Return by the date shown to avoid a fine</li>
-                  <li>· Report damage or loss to the counter</li>
-                  <li>· Late return blocks future reservations</li>
+                  <li>· Arrive 5 minutes early</li>
+                  <li>· Carry your student ID</li>
+                  <li>· Free cancellation up to 2 hours before</li>
                 </ul>
               </div>
             </aside>
@@ -185,178 +211,173 @@ export default function Sports() {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // BROWSE STATE
-  // ═══════════════════════════════════════════════════════════════
+  // ════════ LIST ════════
   return (
     <Layout>
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
+            <span className="section-rule" />
             <h1 className="text-2xl md:text-3xl">Sports</h1>
           </div>
-          <span className="label">
-            {GEAR.filter((g) => g.available > 0).length} of {GEAR.length} in stock
+          <span className="label num">
+            {loading ? '···' : `${String(facilities.length).padStart(2, '0')} facilities`}
           </span>
         </div>
       </section>
 
-      <section className="pb-8">
-        <div className="flex flex-wrap gap-2">
-          {SPORTS.map((s) => (
-            <button
-              key={s}
-              onClick={() => setSport(s)}
-              className={`tag cursor-pointer transition-colors ${
-                sport === s ? 'tag-accent' : 'hover:border-[var(--color-ink-4)]'
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+      <section className="pb-24">
+        {error && (
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">Loading…</span>
+          </div>
+        ) : facilities.length === 0 ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">No sports facilities available</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 border-t border-l border-[var(--color-rule)]">
+            {facilities.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => openBooking(f)}
+                className="group bg-[var(--color-card)] border-r border-b border-[var(--color-rule)] p-8 text-left transition-colors hover:bg-[var(--color-surface-low)] min-h-[280px] flex flex-col justify-between"
+              >
+                <div className="flex items-start justify-between">
+                  <span className="label label-accent num">{f.code}</span>
+                  <span className="text-[var(--color-ink-4)] group-hover:text-[var(--color-accent)] transition-colors">
+                    →
+                  </span>
+                </div>
+
+                <div>
+                  <h3 className="text-2xl group-hover:text-[var(--color-accent)] transition-colors">
+                    {f.name}
+                  </h3>
+                  <p className="mt-3 text-[14px] text-[var(--color-ink-3)] leading-relaxed line-clamp-3">
+                    {f.description}
+                  </p>
+                  <div className="mt-6 flex items-center gap-4 text-[12px] text-[var(--color-ink-4)] flex-wrap">
+                    {f.location && <span>{f.location}</span>}
+                    {f.open_hours && (
+                      <>
+                        <span className="w-1 h-1 bg-[var(--color-ink-4)] rounded-full" />
+                        <span className="num">{f.open_hours}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
-      <section className="pb-24">
-        <div className="grid grid-cols-12 gap-10">
-
-          <div className="col-span-12 lg:col-span-8">
-            <div className="border border-[var(--color-rule)] bg-[var(--color-card)] divide-y divide-[var(--color-rule)]">
-              {filtered.map((g) => {
-                const qty = cart[g.id] ?? 0;
-                const out = g.available === 0;
-                return (
-                  <div
-                    key={g.id}
-                    className={`grid grid-cols-12 gap-4 items-center px-6 py-5 ${
-                      out ? 'opacity-40' : ''
-                    }`}
-                  >
-                    <div className="col-span-8 md:col-span-9">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <h3 className="text-[16px]">{g.name}</h3>
-                        <span className="label">{g.sport}</span>
-                        {out && <span className="label label-accent">Out of stock</span>}
-                      </div>
-                      <p className="mt-1 text-[14px] text-[var(--color-ink-3)] leading-relaxed">
-                        {g.description}
-                      </p>
-                      <div className="mt-2 flex items-center gap-4 text-[13px] text-[var(--color-ink-3)]">
-                        <span className="num">{g.available} available</span>
-                        {g.returnDays > 0 && (
-                          <>
-                            <span className="w-1 h-1 bg-[var(--color-ink-4)] rounded-full" />
-                            <span>Return in {g.returnDays} day{g.returnDays > 1 ? 's' : ''}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="col-span-4 md:col-span-3 flex items-center justify-end gap-3">
-                      {qty === 0 ? (
-                        <button
-                          disabled={out}
-                          onClick={() => add(g.id)}
-                          className="btn btn-ghost text-sm disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          Reserve
-                        </button>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => remove(g.id)}
-                            className="h-8 w-8 flex items-center justify-center border border-[var(--color-rule)] text-[var(--color-ink-2)] hover:border-[var(--color-ink)] transition-colors"
-                            aria-label="Remove"
-                          >
-                            −
-                          </button>
-                          <span className="num text-[15px] w-6 text-center">{qty}</span>
-                          <button
-                            onClick={() => add(g.id)}
-                            disabled={qty >= g.available}
-                            className="h-8 w-8 flex items-center justify-center border border-[var(--color-ink)] bg-[var(--color-ink)] text-white hover:bg-[var(--color-accent)] hover:border-[var(--color-accent)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                            aria-label="Add"
-                          >
-                            +
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+      {/* ════════ BOOKING MODAL ════════ */}
+      {activeFacility && (
+        <div
+          className="fixed inset-0 z-50 bg-[var(--color-ink)]/60 flex items-center justify-center p-4 overflow-y-auto"
+          onClick={closeModal}
+        >
+          <div
+            className="bg-[var(--color-card)] border border-[var(--color-rule)] w-full max-w-lg my-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
+              <div className="flex items-center gap-3">
+                <span className="label label-accent num">{activeFacility.code}</span>
+                <span className="label">Book session</span>
+              </div>
+              <button
+                onClick={closeModal}
+                className="label hover:text-[var(--color-ink)] transition"
+              >
+                Close
+              </button>
             </div>
-          </div>
 
-          <aside className="col-span-12 lg:col-span-4">
-            <div className="border border-[var(--color-rule)] bg-[var(--color-card)] lg:sticky lg:top-6">
-              <div className="px-6 py-4 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)] flex items-center justify-between">
-                <span className="label">Your reservation</span>
-                <span className="label num">
-                  {String(totalItems).padStart(2, '0')} items
-                </span>
+            <form onSubmit={submitBooking} className="px-6 py-6 space-y-6">
+              <div>
+                <h2 className="text-2xl leading-tight">{activeFacility.name}</h2>
+                {activeFacility.location && (
+                  <p className="mt-2 text-[13px] text-[var(--color-ink-3)]">
+                    {activeFacility.location}
+                  </p>
+                )}
               </div>
 
-              {cartLines.length === 0 ? (
-                <div className="px-6 py-12 text-center">
-                  <p className="text-[14px] text-[var(--color-ink-3)]">
-                    Reserve gear from the list to submit a pickup request.
-                  </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label block mb-2">
+                    Date <span className="text-[var(--color-accent)]">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={bookingDate}
+                    min={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setBookingDate(e.target.value)}
+                    className="input num"
+                  />
                 </div>
-              ) : (
-                <>
-                  <ul className="divide-y divide-[var(--color-rule)]">
-                    {cartLines.map((l) => (
-                      <li key={l.item.id} className="flex items-start gap-3 px-6 py-4">
-                        <span className="label num mt-0.5 shrink-0 w-8">
-                          {String(l.qty).padStart(2, '0')}×
-                        </span>
-                        <span className="flex-1 text-[14px] leading-snug">{l.item.name}</span>
-                        <span className="label">{l.item.sport}</span>
-                      </li>
-                    ))}
-                  </ul>
+                <div>
+                  <label className="label block mb-2">
+                    Start time <span className="text-[var(--color-accent)]">*</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={bookingTime}
+                    onChange={(e) => setBookingTime(e.target.value)}
+                    className="input num"
+                  />
+                </div>
+              </div>
 
-                  <div className="px-6 py-4 border-t border-[var(--color-rule)] space-y-3 text-[14px]">
-                    <div className="flex items-center justify-between text-[var(--color-ink-3)]">
-                      <span>Total items</span>
-                      <span className="num">{totalItems}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[var(--color-ink-3)]">
-                      <span>Max return window</span>
-                      <span className="num">{totalReturnDays || 1} day{totalReturnDays > 1 ? 's' : ''}</span>
-                    </div>
-                  </div>
+              <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={confirmed}
+                    onChange={(e) => setConfirmed(e.target.checked)}
+                    className="mt-0.5 accent-[var(--color-accent)]"
+                  />
+                  <span className="text-[13px] leading-relaxed">
+                    I confirm this slot and will carry my student ID.
+                  </span>
+                </label>
+              </div>
 
-                  <div className="px-6 py-4 border-t border-[var(--color-rule)]">
-                    <label className="label block mb-2">Pickup date</label>
-                    <input
-                      type="date"
-                      value={pickupDate}
-                      min={new Date().toISOString().slice(0, 10)}
-                      onChange={(e) => setPickupDate(e.target.value)}
-                      className="input num"
-                    />
-                  </div>
-
-                  <div className="px-6 py-5 border-t border-[var(--color-rule)]">
-                    <button
-                      onClick={submitReservation}
-                      className="btn btn-accent w-full"
-                    >
-                      Confirm reservation
-                    </button>
-                    <p className="mt-3 text-[12px] text-[var(--color-ink-4)] text-center leading-relaxed">
-                      Free of charge. Bring your student ID to collect.
-                    </p>
-                  </div>
-                </>
+              {formError && (
+                <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3">
+                  <span className="text-[13px] text-[var(--color-accent)]">{formError}</span>
+                </div>
               )}
-            </div>
-          </aside>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="btn btn-ghost text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting || !confirmed}
+                  className="btn btn-accent text-sm flex-1 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  {submitting ? 'Booking…' : 'Confirm booking'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </section>
+      )}
     </Layout>
   );
 }

@@ -12,25 +12,7 @@ interface StoreItem {
   description: string;
 }
 
-const ITEMS: StoreItem[] = [
-  { id: 1,  name: 'A4 Notebook (200 pages)',    category: 'Stationery',  price: 60,  unit: 'piece',  available: 45,  description: 'Ruled, single-line, spiral bound' },
-  { id: 2,  name: 'Engineering Drawing Sheet',  category: 'Stationery',  price: 15,  unit: 'piece',  available: 120, description: 'A2, 90 GSM, imperial size' },
-  { id: 3,  name: 'Graph Paper Pad',            category: 'Stationery',  price: 45,  unit: 'pad',    available: 30,  description: 'A4, 100 sheets, 1mm squares' },
-  { id: 4,  name: 'Drawing Instruments Set',    category: 'Instruments', price: 380, unit: 'set',    available: 8,   description: 'Compass, divider, set squares, protractor' },
-  { id: 5,  name: 'Scientific Calculator',      category: 'Instruments', price: 950, unit: 'piece',  available: 12,  description: 'Casio FX-991, non-programmable' },
-  { id: 6,  name: 'Geometry Box',               category: 'Instruments', price: 220, unit: 'set',    available: 6,   description: 'Metal box, complete set' },
-  { id: 7,  name: 'Ballpoint Pen (Blue)',       category: 'Stationery',  price: 10,  unit: 'piece',  available: 200, description: '0.7mm, smooth write' },
-  { id: 8,  name: 'Pencil HB',                  category: 'Stationery',  price: 8,   unit: 'piece',  available: 150, description: 'Standard HB, sharpened' },
-  { id: 9,  name: 'Eraser + Sharpener Combo',   category: 'Stationery',  price: 15,  unit: 'set',    available: 80,  description: 'Non-dust eraser with steel sharpener' },
-  { id: 10, name: 'Toothpaste (100g)',          category: 'Daily',       price: 90,  unit: 'tube',   available: 25,  description: 'Fluoride, mint' },
-  { id: 11, name: 'Bath Soap',                  category: 'Daily',       price: 45,  unit: 'piece',  available: 40,  description: 'Antibacterial' },
-  { id: 12, name: 'Shampoo Sachet',             category: 'Daily',       price: 5,   unit: 'sachet', available: 100, description: 'Single-use, various brands' },
-  { id: 13, name: 'Sanitary Pads (Pack of 10)', category: 'Daily',       price: 85,  unit: 'pack',   available: 30,  description: 'Ultra-thin, wings' },
-  { id: 14, name: 'Biscuits (Britannia)',       category: 'Food',        price: 30,  unit: 'pack',   available: 60,  description: 'Good Day, cashew' },
-  { id: 15, name: 'Instant Noodles',            category: 'Food',        price: 25,  unit: 'pack',   available: 50,  description: 'Maggi, masala' },
-  { id: 16, name: 'Energy Bar',                 category: 'Food',        price: 40,  unit: 'piece',  available: 35,  description: 'Peanut butter, 40g' },
-];
-
+const ITEMS: StoreItem[] = [];
 type CategoryFilter = 'All' | StoreItem['category'];
 const CATEGORIES: CategoryFilter[] = ['All', 'Stationery', 'Instruments', 'Daily', 'Food'];
 

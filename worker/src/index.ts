@@ -41,8 +41,12 @@ export default {
 
       // ═══════════════════════════════════════════════════════════
       // GET /api/facilities
+      //   ?kind=lab|sports|canteen|store|library|all  (default: lab)
+      //   ?category=...
+      //   ?q=...
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/facilities' && request.method === 'GET') {
+        const kind = url.searchParams.get('kind') ?? 'lab';
         const category = url.searchParams.get('category');
         const query = url.searchParams.get('q');
 
@@ -50,22 +54,22 @@ export default {
           SELECT id, code, name, category, kind, description, contact,
                  equipment, location, capacity, open_hours, status
           FROM facilities
+          WHERE 1=1
         `;
-        const conditions: string[] = [];
         const params: unknown[] = [];
 
+        if (kind !== 'all') {
+          sql += ' AND kind = ?';
+          params.push(kind);
+        }
         if (category) {
-          conditions.push('category = ?');
+          sql += ' AND category = ?';
           params.push(category);
         }
         if (query) {
-          conditions.push('(name LIKE ? OR code LIKE ? OR description LIKE ?)');
+          sql += ' AND (name LIKE ? OR code LIKE ? OR description LIKE ?)';
           const like = `%${query}%`;
           params.push(like, like, like);
-        }
-
-        if (conditions.length) {
-          sql += ' WHERE ' + conditions.join(' AND ');
         }
         sql += ' ORDER BY category, code';
 
@@ -104,36 +108,36 @@ export default {
       }
 
       // ═══════════════════════════════════════════════════════════
-      // GET /api/requests
+      // GET /api/requests?user_id=X&status=Y
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/requests' && request.method === 'GET') {
         const userId = url.searchParams.get('user_id');
         const status = url.searchParams.get('status');
 
+        if (!userId) {
+          return json({ error: 'user_id is required' }, cors, 400);
+        }
+
         let sql = `
           SELECT
             r.id, r.kind, r.title, r.status,
-            r.scheduled_start, r.scheduled_end, r.created_at, r.approved_at,
-            f.id AS facility_id, f.code AS facility_code, f.name AS facility_name,
+            r.purpose, r.return_by,
+            r.scheduled_start, r.scheduled_end,
+            r.created_at, r.approved_at,
+            f.id AS facility_id,
+            f.code AS facility_code,
+            f.name AS facility_name,
             u.name AS requester_name
           FROM requests r
-          JOIN facilities f ON f.id = r.facility_id
+          LEFT JOIN facilities f ON f.id = r.facility_id
           JOIN users u ON u.id = r.requester_id
+          WHERE r.requester_id = ?
         `;
-        const conditions: string[] = [];
-        const params: unknown[] = [];
+        const params: unknown[] = [Number(userId)];
 
-        if (userId) {
-          conditions.push('r.requester_id = ?');
-          params.push(Number(userId));
-        }
         if (status) {
-          conditions.push('r.status = ?');
+          sql += ' AND r.status = ?';
           params.push(status);
-        }
-
-        if (conditions.length) {
-          sql += ' WHERE ' + conditions.join(' AND ');
         }
         sql += ' ORDER BY r.created_at DESC';
 
@@ -143,6 +147,134 @@ export default {
           .all();
 
         return json({ requests: result.results }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // POST /api/requests
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/requests' && request.method === 'POST') {
+        const body = await request.json<{
+          kind: 'lab' | 'canteen' | 'library' | 'sports' | 'store';
+          requester_id: number;
+          sponsor_id?: number;
+          facility_id?: number;
+          title: string;
+          description?: string;
+          purpose?: string;
+          return_by?: string;
+          scheduled_start?: string;
+          scheduled_end?: string;
+          items?: Array<{
+            item_type: string;
+            inventory_id?: number;
+            quantity: number;
+            unit?: string;
+            notes?: string;
+          }>;
+        }>();
+
+        if (!body.kind || !body.requester_id || !body.title) {
+          return json(
+            { error: 'Missing kind, requester_id, or title' },
+            cors,
+            400,
+          );
+        }
+
+        // Lab requests require purpose + sponsor + items
+        if (body.kind === 'lab') {
+          if (!body.purpose || body.purpose.trim().length < 15) {
+            return json(
+              { error: 'Purpose is required (min 15 characters) for lab requests' },
+              cors,
+              400,
+            );
+          }
+          if (!body.sponsor_id) {
+            return json(
+              { error: 'Faculty sponsor is required for lab requests' },
+              cors,
+              400,
+            );
+          }
+          if (!body.items || body.items.length === 0) {
+            return json(
+              { error: 'At least one item is required for lab requests' },
+              cors,
+              400,
+            );
+          }
+        }
+
+        // Return date required for borrowed equipment
+        const hasBorrowableItem = (body.items ?? []).some(
+          (i) => i.item_type === 'inventory' || i.item_type === 'sports_equipment',
+        );
+        if (hasBorrowableItem && !body.return_by) {
+          return json(
+            { error: 'Return by date is required for borrowed items' },
+            cors,
+            400,
+          );
+        }
+
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+        const status =
+          body.kind === 'lab'       ? 'submitted'
+          : body.kind === 'library' ? 'completed'
+          : 'scheduled';
+
+        const insertReq = await env.campusflow_db
+          .prepare(`
+            INSERT INTO requests
+              (kind, requester_id, sponsor_id, facility_id, title, description,
+               purpose, return_by, status,
+               scheduled_start, scheduled_end, created_at, submitted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+          .bind(
+            body.kind,
+            body.requester_id,
+            body.sponsor_id ?? null,
+            body.facility_id ?? null,
+            body.title,
+            body.description ?? null,
+            body.purpose ?? null,
+            body.return_by ?? null,
+            status,
+            body.scheduled_start ?? null,
+            body.scheduled_end ?? null,
+            now,
+            now,
+          )
+          .run();
+
+        const requestId = insertReq.meta.last_row_id;
+
+        for (const item of body.items ?? []) {
+          await env.campusflow_db
+            .prepare(`
+              INSERT INTO request_items
+                (request_id, item_type, inventory_id, quantity, unit, notes)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `)
+            .bind(
+              requestId,
+              item.item_type,
+              item.inventory_id ?? null,
+              item.quantity,
+              item.unit ?? 'piece',
+              item.notes ?? null,
+            )
+            .run();
+        }
+
+        return json(
+          { success: true, request_id: requestId, status },
+          cors,
+          201,
+        );
       }
 
       // ═══════════════════════════════════════════════════════════
@@ -161,7 +293,7 @@ export default {
               u.name AS requester_name, u.email AS requester_email,
               s.name AS sponsor_name, s.email AS sponsor_email, s.department AS sponsor_dept
             FROM requests r
-            JOIN facilities f ON f.id = r.facility_id
+            LEFT JOIN facilities f ON f.id = r.facility_id
             JOIN users u ON u.id = r.requester_id
             LEFT JOIN users s ON s.id = r.sponsor_id
             WHERE r.id = ?
@@ -204,6 +336,210 @@ export default {
             request: req,
             items: items.results,
             approvals: approvals.results,
+          },
+          cors,
+        );
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // POST /api/requests/:id/decide
+      // ═══════════════════════════════════════════════════════════
+      const decideMatch = path.match(/^\/api\/requests\/(\d+)\/decide$/);
+      if (decideMatch && request.method === 'POST') {
+        const reqId = Number(decideMatch[1]);
+        const body = await request.json<{
+          approver_id: number;
+          decision: 'approved' | 'rejected' | 'needs_info';
+          comments?: string;
+        }>();
+
+        if (!body.approver_id || !body.decision) {
+          return json(
+            { error: 'approver_id and decision are required' },
+            cors,
+            400,
+          );
+        }
+
+        const req = await env.campusflow_db
+          .prepare('SELECT id, status FROM requests WHERE id = ?')
+          .bind(reqId)
+          .first<{ id: number; status: string }>();
+
+        if (!req) {
+          return json({ error: 'Request not found' }, cors, 404);
+        }
+
+        const approver = await env.campusflow_db
+          .prepare('SELECT id, role FROM users WHERE id = ?')
+          .bind(body.approver_id)
+          .first<{ id: number; role: string }>();
+
+        if (!approver) {
+          return json({ error: 'Approver not found' }, cors, 404);
+        }
+
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+        await env.campusflow_db
+          .prepare(`
+            INSERT INTO approvals
+              (request_id, approver_id, approver_role, decision, comments, decided_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `)
+          .bind(
+            reqId,
+            body.approver_id,
+            approver.role,
+            body.decision,
+            body.comments ?? null,
+            now,
+          )
+          .run();
+
+        let newStatus = req.status;
+
+        if (body.decision === 'rejected') {
+          newStatus = 'rejected';
+        } else if (body.decision === 'approved') {
+          if (req.status === 'submitted') {
+            newStatus = 'pending_approval';
+          } else if (req.status === 'pending_approval') {
+            newStatus = 'approved';
+          }
+        }
+
+        await env.campusflow_db
+          .prepare('UPDATE requests SET status = ?, approved_at = ? WHERE id = ?')
+          .bind(newStatus, newStatus === 'approved' ? now : null, reqId)
+          .run();
+
+        return json({ success: true, status: newStatus }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // GET /api/admin/queue?approver_id=X
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/admin/queue' && request.method === 'GET') {
+        const approverId = url.searchParams.get('approver_id');
+        if (!approverId) {
+          return json({ error: 'approver_id is required' }, cors, 400);
+        }
+
+        const approver = await env.campusflow_db
+          .prepare('SELECT id, role FROM users WHERE id = ?')
+          .bind(Number(approverId))
+          .first<{ id: number; role: string }>();
+
+        if (!approver) {
+          return json({ error: 'Approver not found' }, cors, 404);
+        }
+
+        let sql = `
+          SELECT
+            r.id, r.kind, r.title, r.status, r.purpose, r.return_by,
+            r.created_at, r.submitted_at,
+            f.id AS facility_id, f.code AS facility_code, f.name AS facility_name,
+            u.name AS requester_name, u.email AS requester_email,
+            s.name AS sponsor_name
+          FROM requests r
+          LEFT JOIN facilities f ON f.id = r.facility_id
+          JOIN users u ON u.id = r.requester_id
+          LEFT JOIN users s ON s.id = r.sponsor_id
+          WHERE 1=1
+        `;
+        const params: unknown[] = [];
+
+        if (approver.role === 'faculty') {
+          sql += ' AND r.sponsor_id = ? AND r.status = "submitted"';
+          params.push(Number(approverId));
+        } else if (approver.role === 'technician') {
+          sql += ' AND r.status = "pending_approval"';
+        } else if (approver.role === 'admin') {
+          sql += ' AND r.status NOT IN ("completed","rejected","cancelled")';
+        } else {
+          return json({ queue: [] }, cors);
+        }
+
+        sql += ' ORDER BY r.submitted_at ASC';
+
+        const result = await env.campusflow_db
+          .prepare(sql)
+          .bind(...params)
+          .all();
+
+        return json({ queue: result.results }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // GET /api/users?role=X
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/users' && request.method === 'GET') {
+        const role = url.searchParams.get('role');
+
+        let sql = `
+          SELECT id, email, name, role, department
+          FROM users
+        `;
+        const params: unknown[] = [];
+
+        if (role) {
+          sql += ' WHERE role = ?';
+          params.push(role);
+        }
+        sql += ' ORDER BY role, department, name';
+
+        const result = await env.campusflow_db
+          .prepare(sql)
+          .bind(...params)
+          .all();
+
+        return json({ users: result.results }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // POST /api/auth/login
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/auth/login' && request.method === 'POST') {
+        const body = await request.json<{ email: string; password: string }>();
+        const email = (body.email ?? '').trim().toLowerCase();
+        const password = body.password ?? '';
+
+        if (!email || !password) {
+          return json({ error: 'Email and password are required' }, cors, 400);
+        }
+
+        const user = await env.campusflow_db
+          .prepare(`
+            SELECT id, email, name, role, department, password
+            FROM users
+            WHERE LOWER(email) = ?
+          `)
+          .bind(email)
+          .first<any>();
+
+        if (!user || user.password !== password) {
+          return json({ error: 'Invalid email or password' }, cors, 401);
+        }
+
+        const initials = user.name
+          .split(/[\s-]+/)
+          .map((p: string) => p[0])
+          .filter(Boolean)
+          .join('')
+          .slice(0, 2)
+          .toUpperCase();
+
+        return json(
+          {
+            user: {
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              role: user.role,
+              department: user.department,
+              initials,
+            },
           },
           cors,
         );
@@ -310,17 +646,12 @@ export default {
                 (request_id, item_type, menu_item_id, quantity, unit, notes)
               VALUES (?, 'menu_item', ?, ?, 'plate', ?)
             `)
-            .bind(
-              requestId,
-              line.menu_item_id,
-              line.quantity,
-              line.notes ?? null,
-            )
+            .bind(requestId, line.menu_item_id, line.quantity, line.notes ?? null)
             .run();
         }
 
         const maxQueue = await env.campusflow_db
-          .prepare(`SELECT COALESCE(MAX(queue_position), 0) AS max_q FROM canteen_orders`)
+          .prepare('SELECT COALESCE(MAX(queue_position), 0) AS max_q FROM canteen_orders')
           .first<{ max_q: number }>();
         const queuePosition = (maxQueue?.max_q ?? 0) + 1;
 
@@ -385,26 +716,6 @@ export default {
       }
 
       // ═══════════════════════════════════════════════════════════
-      // CANTEEN — GET /api/canteen/queue
-      // ═══════════════════════════════════════════════════════════
-      if (path === '/api/canteen/queue' && request.method === 'GET') {
-        const queue = await env.campusflow_db
-          .prepare(`
-            SELECT co.request_id, co.queue_position, co.pickup_at, co.prep_started_at,
-                   r.title, u.name AS requester_name
-            FROM canteen_orders co
-            JOIN requests r ON r.id = co.request_id
-            JOIN users u ON u.id = r.requester_id
-            WHERE co.prep_completed_at IS NULL
-            ORDER BY co.queue_position ASC
-            LIMIT 20
-          `)
-          .all();
-
-        return json({ queue: queue.results }, cors);
-      }
-
-      // ═══════════════════════════════════════════════════════════
       // LIBRARY — GET /api/library/books
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/library/books' && request.method === 'GET') {
@@ -414,23 +725,19 @@ export default {
         let sql = `
           SELECT id, isbn, title, author, total_copies, available_copies, shelf_code
           FROM library_books
+          WHERE 1=1
         `;
-        const conditions: string[] = [];
         const params: unknown[] = [];
 
         if (query) {
-          conditions.push('(title LIKE ? OR author LIKE ? OR isbn LIKE ?)');
+          sql += ' AND (title LIKE ? OR author LIKE ? OR isbn LIKE ?)';
           const like = `%${query}%`;
           params.push(like, like, like);
         }
         if (filter === 'available') {
-          conditions.push('available_copies > 0');
+          sql += ' AND available_copies > 0';
         } else if (filter === 'out') {
-          conditions.push('available_copies = 0');
-        }
-
-        if (conditions.length) {
-          sql += ' WHERE ' + conditions.join(' AND ');
+          sql += ' AND available_copies = 0';
         }
         sql += ' ORDER BY title';
 
@@ -469,10 +776,10 @@ export default {
         const insertReq = await env.campusflow_db
           .prepare(`
             INSERT INTO requests
-              (kind, requester_id, facility_id, title, description, status,
+              (kind, requester_id, title, description, status,
                scheduled_start, created_at, submitted_at, approved_at)
             VALUES
-              ('library', ?, 6, ?, 'Renewed for 14 days', 'completed',
+              ('library', ?, ?, 'Renewed for 14 days', 'completed',
                ?, ?, ?, ?)
           `)
           .bind(
@@ -491,7 +798,7 @@ export default {
           .prepare(`
             INSERT INTO request_items
               (request_id, item_type, quantity, unit, notes)
-            VALUES (?, 'inventory', 1, 'book', ?)
+            VALUES (?, 'book', 1, 'book', ?)
           `)
           .bind(requestId, `${book.title} by ${book.author}`)
           .run();
@@ -510,9 +817,10 @@ export default {
 
       // ═══════════════════════════════════════════════════════════
       // AI ASSISTANT — POST /api/ai/chat
+      //   Grounds every response in the actual facility data.
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/ai/chat' && request.method === 'POST') {
-        const body = await request.json<{ message: string; context?: string }>();
+        const body = await request.json<{ message: string }>();
         const message = (body.message ?? '').trim();
 
         if (!message) {
@@ -522,49 +830,76 @@ export default {
           return json({ error: 'Message too long' }, cors, 400);
         }
 
+        // Pull full facility data including equipment
         const facilities = await env.campusflow_db
           .prepare(`
-            SELECT code, name, category,
-                   substr(description, 1, 120) AS description
+            SELECT code, name, category, description, equipment
             FROM facilities
+            WHERE kind = 'lab'
             ORDER BY category, code
           `)
           .all();
 
+        // Build a rich, well-structured facility list for the prompt
         const facilityList = (facilities.results ?? [])
-          .map((f: any) => `${f.code} | ${f.name} | ${f.category} | ${f.description}`)
-          .join('\n');
+          .map((f: any) => {
+            const eq = safeParse(f.equipment) as string[];
+            const equipmentStr =
+              eq.length > 0 ? `Equipment: ${eq.join(', ')}` : 'Equipment: (not listed)';
+            return `[${f.code}] ${f.name} (${f.category})\n${f.description}\n${equipmentStr}`;
+          })
+          .join('\n\n');
 
         const systemPrompt = `You are CampusFlow Assistant for Amrita Vishwa Vidyapeetham, Ettimadai campus.
 
-You help students, faculty, and staff find facilities, equipment, and services.
+You help students, faculty, and staff find labs, equipment, and services.
 
-FACILITIES AVAILABLE:
+You ONLY know the facilities listed below. You do NOT invent labs, equipment, or contacts.
+
+=== FACILITIES ===
 ${facilityList}
+=== END FACILITIES ===
 
-SERVICES:
-- Lab access (equipment, components, supervised slots) — requires faculty sponsor
-- Canteen (pre-order meals, pickup slot)
-- Library (search, renew books)
-- Sports (borrow rackets, balls, gear)
-- Stores (reserve stationery, essentials)
+SERVICES AVAILABLE:
+- Lab access — requires faculty sponsor, a stated purpose, and a list of items
+- Canteen — pre-order meals, pickup slot
+- Library — search and renew books
+- Sports — book pool sessions and borrow gear
+- Stores — reserve stationery, essentials
 
-RULES:
-1. Reply in plain English. Be direct.
-2. If the user asks about a specific facility, name it with its code (e.g., "Embedded Computing Laboratory (E-09)").
-3. If the user wants to book, tell them to use the "Request access" button on the facility page.
-4. Keep replies under 4 sentences unless the user asks for detail.
-5. Do not invent equipment, contacts, or facilities. Only reference what's listed above.
-6. If nothing matches, say so and suggest the closest alternative.`;
+STRICT RULES:
+1. Only reference facilities by their code (E-08, C-02, etc.) when you name them.
+2. If a question asks about equipment, check the "Equipment:" line for each lab. If no lab lists that equipment, say "No lab currently lists that equipment."
+3. If you are unsure, ask a clarifying question instead of guessing.
+4. Never invent facility names, codes, contacts, or equipment.
+5. Keep answers under 4 sentences unless the user asks for a full list.
+6. Reply in plain English. No markdown headers or bullet lists unless the user asks.
 
-        const aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct-fp8-fast', {
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: message },
-          ],
-          max_tokens: 400,
-          temperature: 0.3,
-        });
+EXAMPLES:
+
+User: Which lab has an FPGA board available?
+Assistant: Three labs list FPGA hardware. VLSI Design – UG (E-08) has Basys 3 and Zybo Z7-10 boards. DSP Lab (E-07) has ATLYS and ANVYL Spartan-6 boards. VLSI Design – PG (E-10) has the Xilinx ZCU104 evaluation kit. You'll need a faculty sponsor and an induction certificate to request access.
+
+User: Where can I do nanomaterial synthesis?
+Assistant: Nanomaterials Laboratory (CH-04) supports nanomaterial synthesis, thin-film deposition, and electrical property measurements. You'll need a faculty sponsor and a stated purpose. Would you like me to point you to the request form?
+
+User: Can I book a tennis court?
+Assistant: I don't have a tennis court in the current list. The Sports page has Swimming Pool (G-05) and Sports Materials (G-07) for gear. Check there, or let me know what you need and I'll look again.
+
+User: I need something for my IoT project.
+Assistant: Intelligent Electronics System Laboratory (C-02) has ESP32 boards, LoRa gateways, and NVIDIA Jetson Nano kits — a strong fit for IoT work. Would you like me to check what else is available?`;
+
+        const aiResponse = await env.AI.run(
+          '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
+          {
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: message },
+            ],
+            max_tokens: 400,
+            temperature: 0.1,
+          },
+        );
 
         const reply =
           typeof aiResponse === 'string'

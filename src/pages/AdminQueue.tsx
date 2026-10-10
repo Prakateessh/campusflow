@@ -1,358 +1,349 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { useAuth } from '../lib/auth';
 
-type Decision = 'approved' | 'rejected' | 'needs_info';
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
 interface QueueItem {
-  id: string;
-  kind: 'Lab' | 'Canteen' | 'Sports' | 'Store' | 'Library';
+  id: number;
+  kind: string;
   title: string;
-  requester: { name: string; dept: string; year: string };
-  sponsor: { name: string } | null;
-  facility: { code: string; name: string };
-  submittedAt: string;
-  waitingFor: string;   // 'You' if it's my queue, else name
-  items: Array<{ qty: number; name: string }>;
-  notes?: string;
-  priority: 'high' | 'normal';
+  status: string;
+  purpose: string | null;
+  return_by: string | null;
+  created_at: string;
+  submitted_at: string | null;
+  facility_id: number;
+  facility_code: string;
+  facility_name: string;
+  requester_name: string;
+  requester_email: string;
+  sponsor_name: string | null;
 }
 
-const QUEUE: QueueItem[] = [
-  {
-    id: 'R-1043',
-    kind: 'Lab',
-    title: 'SEM imaging — 3 PCB samples',
-    requester: { name: 'Divya Menon', dept: 'ECE', year: 'Semester 5' },
-    sponsor: { name: 'Dr. Priya Nair' },
-    facility: { code: 'CH-01', name: 'Central Instrumentation Facility' },
-    submittedAt: '13 Oct · 10:04',
-    waitingFor: 'You',
-    items: [
-      { qty: 3, name: 'SEM imaging runs' },
-      { qty: 1, name: 'Technician assistance' },
-    ],
-    notes: 'Sample preparation is complete. FESEM required, 10 min per sample.',
-    priority: 'normal',
-  },
-  {
-    id: 'R-1045',
-    kind: 'Lab',
-    title: 'VLSI FPGA board — Basys 3 (1 week)',
-    requester: { name: 'Karthik R.', dept: 'ECE', year: 'Semester 6' },
-    sponsor: { name: 'Dr. Ramesh Kumar' },
-    facility: { code: 'E-08', name: 'VLSI Design – UG Laboratory' },
-    submittedAt: '13 Oct · 09:12',
-    waitingFor: 'You',
-    items: [{ qty: 1, name: 'Basys 3 FPGA Board' }],
-    notes: 'Digital design assignment submission on 22 Oct.',
-    priority: 'high',
-  },
-  {
-    id: 'R-1046',
-    kind: 'Lab',
-    title: 'Welding slot — 2 hours (drone frame)',
-    requester: { name: 'Rahul Sharma', dept: 'MECH', year: 'Semester 7' },
-    sponsor: { name: 'Dr. Arun A.' },
-    facility: { code: 'M-05', name: 'Welding Lab' },
-    submittedAt: '13 Oct · 08:45',
-    waitingFor: 'Dr. A. Sumesh',
-    items: [{ qty: 1, name: 'Supervised welding session' }],
-    notes: 'GTAW on aluminium. Student has completed induction.',
-    priority: 'normal',
-  },
-  {
-    id: 'R-1047',
-    kind: 'Lab',
-    title: '3D print — robot chassis (PLA)',
-    requester: { name: 'Aarav P.', dept: 'CSE', year: 'Semester 3' },
-    sponsor: { name: 'Dr. Priya Nair' },
-    facility: { code: 'I-01', name: 'Additive Manufacturing Lab' },
-    submittedAt: '12 Oct · 16:30',
-    waitingFor: 'You',
-    items: [
-      { qty: 1, name: '3D print job · PLA' },
-      { qty: 1, name: 'PLA filament · 200g' },
-    ],
-    notes: 'Estimate 6 hours print time.',
-    priority: 'normal',
-  },
-  {
-    id: 'R-1048',
-    kind: 'Sports',
-    title: 'Badminton gear — 2 rackets + shuttle tube',
-    requester: { name: 'Meera N.', dept: 'CSE', year: 'Semester 4' },
-    sponsor: null,
-    facility: { code: 'G-07', name: 'Sports Materials' },
-    submittedAt: '12 Oct · 14:10',
-    waitingFor: 'Sports counter',
-    items: [
-      { qty: 2, name: 'Badminton Racket' },
-      { qty: 1, name: 'Shuttlecock tube of 6' },
-    ],
-    priority: 'normal',
-  },
-];
+const STATUS_LABEL: Record<string, string> = {
+  submitted: 'Awaiting sponsor',
+  pending_approval: 'Awaiting technician',
+  approved: 'Approved',
+  scheduled: 'Scheduled',
+  in_progress: 'In progress',
+};
 
-const kindLabels: Record<QueueItem['kind'], string> = {
-  Lab: 'Lab',
-  Canteen: 'Canteen',
-  Sports: 'Sports',
-  Store: 'Store',
-  Library: 'Library',
+const KIND_LABEL: Record<string, string> = {
+  lab: 'Lab',
+  canteen: 'Canteen',
+  library: 'Library',
+  sports: 'Sports',
+  store: 'Store',
 };
 
 export default function AdminQueue() {
-  const [active, setActive] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'mine'>('mine');
-  const [decisions, setDecisions] = useState<Record<string, Decision>>({});
+  const { user } = useAuth();
+
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [activeId, setActiveId] = useState<number | null>(null);
   const [note, setNote] = useState('');
+  const [deciding, setDeciding] = useState(false);
+  const [decided, setDecided] = useState<Record<number, string>>({});
 
-  const visible = useMemo(
-    () => (filter === 'mine' ? QUEUE.filter((q) => q.waitingFor === 'You') : QUEUE),
-    [filter],
-  );
-
-  const openItem = visible.find((q) => q.id === active);
-
-  const submitDecision = (id: string, decision: Decision) => {
-    setDecisions((d) => ({ ...d, [id]: decision }));
-    setActive(null);
-    setNote('');
+  const reload = async () => {
+    if (!user) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/queue?approver_id=${user.id}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Failed to load queue');
+      }
+      const data = await res.json();
+      setQueue(data.queue ?? []);
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to load queue');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const counts = {
-    all: QUEUE.length,
-    mine: QUEUE.filter((q) => q.waitingFor === 'You').length,
-    high: QUEUE.filter((q) => q.priority === 'high').length,
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const openItem = useMemo(
+    () => queue.find((q) => q.id === activeId) ?? null,
+    [queue, activeId],
+  );
+
+  const submitDecision = async (decision: 'approved' | 'rejected' | 'needs_info') => {
+    if (!user || !openItem) return;
+    setDeciding(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/requests/${openItem.id}/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approver_id: user.id,
+          decision,
+          comments: note.trim() || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Decision failed');
+      }
+
+      const result = await res.json();
+      setDecided((d) => ({ ...d, [openItem.id]: result.status }));
+      setActiveId(null);
+      setNote('');
+      await reload();
+    } catch (err: any) {
+      setError(err.message ?? 'Decision failed');
+    } finally {
+      setDeciding(false);
+    }
+  };
+
+  const formatDate = (iso: string | null) => {
+    if (!iso) return '—';
+    const d = new Date(iso.replace(' ', 'T'));
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  };
+
+  const formatTime = (iso: string | null) => {
+    if (!iso) return '—';
+    const d = new Date(iso.replace(' ', 'T'));
+    return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  };
+
+  const roleTitle: Record<string, string> = {
+    faculty: 'Requests awaiting your sponsorship',
+    technician: 'Requests awaiting your review',
+    admin: 'All active requests',
   };
 
   return (
     <Layout>
-      {/* HEADING */}
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
+            <span className="section-rule" />
             <h1 className="text-2xl md:text-3xl">Approval queue</h1>
           </div>
           <span className="label num">
-            {String(counts.mine).padStart(2, '0')} waiting on you
+            {loading ? '···' : `${String(queue.length).padStart(2, '0')} pending`}
           </span>
         </div>
-      </section>
-
-      {/* FILTERS */}
-      <section className="pb-8">
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setFilter('mine')}
-            className={`tag cursor-pointer transition-colors ${
-              filter === 'mine' ? 'tag-accent' : 'hover:border-[var(--color-ink-4)]'
-            }`}
-          >
-            My queue
-            <span className="ml-2 opacity-60 num">{String(counts.mine).padStart(2, '0')}</span>
-          </button>
-          <button
-            onClick={() => setFilter('all')}
-            className={`tag cursor-pointer transition-colors ${
-              filter === 'all' ? 'tag-accent' : 'hover:border-[var(--color-ink-4)]'
-            }`}
-          >
-            All pending
-            <span className="ml-2 opacity-60 num">{String(counts.all).padStart(2, '0')}</span>
-          </button>
-        </div>
-      </section>
-
-      {/* QUEUE */}
-      <section className="pb-24">
-        {visible.length === 0 ? (
-          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
-            <span className="label">Queue is clear</span>
-          </div>
-        ) : (
-          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] divide-y divide-[var(--color-rule)]">
-            {visible.map((q) => {
-              const decided = decisions[q.id];
-              return (
-                <div
-                  key={q.id}
-                  className={`grid grid-cols-12 gap-4 px-6 py-5 items-center transition-colors ${
-                    decided ? 'opacity-50' : 'hover:bg-[var(--color-surface-low)]'
-                  }`}
-                >
-                  {/* Left — id + kind + priority */}
-                  <div className="col-span-12 md:col-span-2 flex flex-col gap-1">
-                    <span className="label num">{q.id}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="label">{kindLabels[q.kind]}</span>
-                      {q.priority === 'high' && !decided && (
-                        <span className="label label-accent">Urgent</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Title + requester */}
-                  <div className="col-span-12 md:col-span-5">
-                    <p className="text-[16px]">{q.title}</p>
-                    <p className="mt-1 text-[13px] text-[var(--color-ink-3)]">
-                      {q.requester.name} · {q.requester.dept} · {q.requester.year}
-                      {q.sponsor && <> · sponsored by {q.sponsor.name}</>}
-                    </p>
-                  </div>
-
-                  {/* Facility + waiting */}
-                  <div className="col-span-6 md:col-span-3">
-                    <p className="text-[14px] text-[var(--color-ink-2)]">
-                      {q.facility.name}
-                    </p>
-                    <p className="mt-1 text-[12px] text-[var(--color-ink-4)] num">
-                      {q.facility.code} · {q.submittedAt}
-                    </p>
-                  </div>
-
-                  {/* Action */}
-                  <div className="col-span-6 md:col-span-2 md:text-right">
-                    {decided ? (
-                      <span
-                        className={`label ${
-                          decided === 'approved' ? 'label-ink'
-                          : decided === 'rejected' ? 'label'
-                          : 'label label-accent'
-                        }`}
-                      >
-                        {decided === 'approved' ? 'Approved'
-                          : decided === 'rejected' ? 'Rejected'
-                          : 'Info requested'}
-                      </span>
-                    ) : q.waitingFor === 'You' ? (
-                      <button
-                        onClick={() => setActive(q.id)}
-                        className="btn btn-ghost text-sm"
-                      >
-                        Review
-                      </button>
-                    ) : (
-                      <span className="label">Waiting on {q.waitingFor}</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        {user && (
+          <p className="mt-3 text-[13px] text-[var(--color-ink-3)]">
+            {roleTitle[user.role] ?? 'Your queue'}
+          </p>
         )}
       </section>
 
-      {/* REVIEW MODAL */}
+      <section className="pb-24">
+        {error && (
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+          </div>
+        )}
+
+        <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
+          <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
+            <span className="col-span-2 label">ID</span>
+            <span className="col-span-5 label">Request</span>
+            <span className="col-span-3 label">Lab</span>
+            <span className="col-span-2 label text-right">Status</span>
+          </div>
+
+          <div className="divide-y divide-[var(--color-rule)]">
+            {loading ? (
+              <div className="py-24 text-center">
+                <span className="label">Loading…</span>
+              </div>
+            ) : queue.length === 0 ? (
+              <div className="py-24 text-center">
+                <span className="label">Queue is clear</span>
+              </div>
+            ) : (
+              queue.map((q) => {
+                const alreadyDecided = decided[q.id];
+                return (
+                  <div
+                    key={q.id}
+                    className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 px-6 py-5 items-center"
+                  >
+                    <div className="md:col-span-2 flex flex-col gap-1">
+                      <span className="label num">R-{String(q.id).padStart(4, '0')}</span>
+                      <span className="text-[12px] text-[var(--color-ink-4)] num">
+                        {formatDate(q.submitted_at)} · {formatTime(q.submitted_at)}
+                      </span>
+                    </div>
+
+                    <div className="md:col-span-5">
+                      <p className="text-[16px]">{q.title}</p>
+                      <p className="mt-1 text-[13px] text-[var(--color-ink-3)]">
+                        {q.requester_name}
+                        {q.sponsor_name ? ` · sponsor ${q.sponsor_name}` : ''}
+                      </p>
+                      {q.purpose && (
+                        <p className="mt-2 text-[12px] text-[var(--color-ink-4)] leading-relaxed line-clamp-2">
+                          {q.purpose}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="md:col-span-3">
+                      <p className="text-[14px] text-[var(--color-ink-2)]">
+                        {q.facility_name}
+                      </p>
+                      <p className="mt-1 text-[12px] text-[var(--color-ink-4)] num">
+                        {q.facility_code} · {KIND_LABEL[q.kind] ?? q.kind}
+                      </p>
+                    </div>
+
+                    <div className="md:col-span-2 md:text-right">
+                      {alreadyDecided ? (
+                        <span className="label label-accent">
+                          {STATUS_LABEL[alreadyDecided] ?? alreadyDecided}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setActiveId(q.id)}
+                          className="btn btn-ghost text-sm"
+                        >
+                          Review
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ════════ REVIEW MODAL ════════ */}
       {openItem && (
         <div
-          className="fixed inset-0 z-50 bg-[var(--color-ink)]/60 flex items-center justify-center p-4"
-          onClick={() => setActive(null)}
+          className="fixed inset-0 z-50 bg-[var(--color-ink)]/60 flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => {
+            setActiveId(null);
+            setNote('');
+          }}
         >
           <div
-            className="bg-[var(--color-card)] border border-[var(--color-rule)] w-full max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-thin"
+            className="bg-[var(--color-card)] border border-[var(--color-rule)] w-full max-w-2xl my-8"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
               <div className="flex items-center gap-3">
-                <span className="label label-accent num">{openItem.id}</span>
+                <span className="label label-accent num">
+                  R-{String(openItem.id).padStart(4, '0')}
+                </span>
                 <span className="label">Review</span>
               </div>
               <button
-                onClick={() => setActive(null)}
+                onClick={() => {
+                  setActiveId(null);
+                  setNote('');
+                }}
                 className="label hover:text-[var(--color-ink)] transition"
               >
                 Close
               </button>
             </div>
 
-            {/* Modal body */}
-            <div className="px-6 py-6 space-y-8">
+            <div className="px-6 py-6 space-y-6">
               <div>
                 <h2 className="text-2xl leading-tight">{openItem.title}</h2>
                 <p className="mt-2 text-[14px] text-[var(--color-ink-3)]">
-                  {openItem.requester.name} · {openItem.requester.dept} · {openItem.requester.year}
+                  {openItem.requester_name} · {openItem.requester_email}
                 </p>
               </div>
 
-              {/* Meta grid */}
-              <div className="grid grid-cols-2 gap-6 border-t border-b border-[var(--color-rule)] py-5">
+              <dl className="grid grid-cols-2 gap-6 border-t border-b border-[var(--color-rule)] py-5 text-[14px]">
                 <div>
-                  <span className="label">Facility</span>
-                  <p className="mt-2 text-[15px]">{openItem.facility.name}</p>
-                  <p className="mt-0.5 text-[13px] text-[var(--color-ink-3)] num">
-                    {openItem.facility.code}
-                  </p>
+                  <dt className="label">Lab</dt>
+                  <dd className="mt-2">{openItem.facility_name}</dd>
+                  <dd className="mt-0.5 text-[12px] text-[var(--color-ink-3)] num">
+                    {openItem.facility_code}
+                  </dd>
                 </div>
                 <div>
-                  <span className="label">Submitted</span>
-                  <p className="mt-2 text-[15px] num">{openItem.submittedAt}</p>
+                  <dt className="label">Submitted</dt>
+                  <dd className="mt-2 num">
+                    {formatDate(openItem.submitted_at)} · {formatTime(openItem.submitted_at)}
+                  </dd>
                 </div>
-                {openItem.sponsor && (
+                {openItem.sponsor_name && (
                   <div>
-                    <span className="label">Sponsor</span>
-                    <p className="mt-2 text-[15px]">{openItem.sponsor.name}</p>
+                    <dt className="label">Sponsor</dt>
+                    <dd className="mt-2">{openItem.sponsor_name}</dd>
                   </div>
                 )}
-              </div>
+                {openItem.return_by && (
+                  <div>
+                    <dt className="label">Return by</dt>
+                    <dd className="mt-2 num">{openItem.return_by}</dd>
+                  </div>
+                )}
+              </dl>
 
-              {/* Items */}
-              <div>
-                <span className="label">Items requested</span>
-                <ul className="mt-3 border border-[var(--color-rule)] divide-y divide-[var(--color-rule)]">
-                  {openItem.items.map((it, i) => (
-                    <li key={i} className="flex items-center gap-4 px-4 py-3">
-                      <span className="label num w-8 shrink-0">
-                        {String(it.qty).padStart(2, '0')}×
-                      </span>
-                      <span className="text-[15px]">{it.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Notes */}
-              {openItem.notes && (
+              {openItem.purpose && (
                 <div>
-                  <span className="label">Student note</span>
-                  <p className="mt-2 text-[15px] text-[var(--color-ink-2)] leading-relaxed italic">
-                    “{openItem.notes}”
+                  <span className="label">Purpose</span>
+                  <p className="mt-2 text-[15px] leading-relaxed text-[var(--color-ink-2)]">
+                    {openItem.purpose}
                   </p>
                 </div>
               )}
 
-              {/* Decision note */}
               <div>
                 <label className="label block mb-2">Your note (optional)</label>
                 <textarea
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   rows={3}
-                  placeholder="Add a note for the student…"
+                  placeholder="Add a note for the requester…"
                   className="input resize-none"
                 />
               </div>
+
+              <Link
+                to={`/requests/${openItem.id}`}
+                className="inline-block text-[13px] text-[var(--color-accent)] underline hover:no-underline"
+              >
+                View full request →
+              </Link>
             </div>
 
-            {/* Modal footer */}
-            <div className="px-6 py-5 border-t border-[var(--color-rule)] bg-[var(--color-surface-low) grid grid-cols-3 gap-3">
+            <div className="px-6 py-5 border-t border-[var(--color-rule)] bg-[var(--color-surface-low)] grid grid-cols-3 gap-3">
               <button
-                onClick={() => submitDecision(openItem.id, 'rejected')}
-                className="btn btn-outline text-sm"
+                onClick={() => submitDecision('rejected')}
+                disabled={deciding}
+                className="btn btn-outline text-sm disabled:opacity-50"
               >
                 Reject
               </button>
               <button
-                onClick={() => submitDecision(openItem.id, 'needs_info')}
-                className="btn btn-ghost text-sm"
+                onClick={() => submitDecision('needs_info')}
+                disabled={deciding}
+                className="btn btn-ghost text-sm disabled:opacity-50"
               >
                 Request info
               </button>
               <button
-                onClick={() => submitDecision(openItem.id, 'approved')}
-                className="btn btn-accent text-sm"
+                onClick={() => submitDecision('approved')}
+                disabled={deciding}
+                className="btn btn-accent text-sm disabled:opacity-50"
               >
                 Approve
               </button>

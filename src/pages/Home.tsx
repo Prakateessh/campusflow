@@ -1,15 +1,51 @@
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { useAuth } from '../lib/auth';
+import { getRequests, type RequestListItem } from '../lib/api';
 
 export default function Home() {
   const { user } = useAuth();
+  const [requests, setRequests] = useState<RequestListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    getRequests({ user_id: user.id })
+      .then((data) => {
+        if (!cancelled) setRequests(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const stats = [
-    { label: 'Total',     value: 12 },
-    { label: 'Pending',   value: 3 },
-    { label: 'Ongoing',   value: 2 },
-    { label: 'Completed', value: 7 },
+    { label: 'Total',     value: requests.length },
+    {
+      label: 'Pending',
+      value: requests.filter((r) => ['submitted', 'pending_approval'].includes(r.status)).length,
+    },
+    {
+      label: 'Ongoing',
+      value: requests.filter((r) => ['approved', 'scheduled', 'in_progress'].includes(r.status)).length,
+    },
+    {
+      label: 'Completed',
+      value: requests.filter((r) => r.status === 'completed').length,
+    },
   ];
 
   const services = [
@@ -20,16 +56,28 @@ export default function Home() {
     { name: 'Stores',     desc: 'Reserve stationery and daily essentials.',             to: '/store',      image: '/store.jpeg' },
   ];
 
+  const roleLabel: Record<string, string> = {
+    student: 'Student',
+    faculty: 'Faculty',
+    technician: 'Technician',
+    service_provider: 'Service Provider',
+    admin: 'Admin',
+  };
+
   return (
     <Layout>
-      {/* WELCOME */}
       <section className="pt-14 pb-10">
         <div className="flex items-baseline justify-between">
           <div>
             <span className="label">Session 2025–26</span>
             <h1 className="mt-4 text-3xl md:text-4xl">
-              Welcome, {user?.name.split(' ')[0] ?? 'there'}.
+              Welcome, {user?.name ?? 'there'}.
             </h1>
+            {user && (
+              <p className="mt-2 text-[13px] text-[var(--color-ink-3)]">
+                {roleLabel[user.role] ?? user.role} · {user.department}
+              </p>
+            )}
           </div>
           <span className="label hidden md:block num">
             {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
@@ -37,7 +85,14 @@ export default function Home() {
         </div>
       </section>
 
-      {/* STATS */}
+      {error && (
+        <section className="pb-8">
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3">
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+          </div>
+        </section>
+      )}
+
       <section className="pb-14">
         <div className="grid grid-cols-2 md:grid-cols-4 border-t border-l border-[var(--color-rule)]">
           {stats.map((s) => (
@@ -48,14 +103,13 @@ export default function Home() {
               <div className="absolute top-0 left-0 w-16 h-px bg-gradient-to-r from-[var(--color-accent)] to-transparent" />
               <span className="label">{s.label}</span>
               <div className="mt-4 font-display text-4xl md:text-5xl num leading-none">
-                {String(s.value).padStart(2, '0')}
+                {loading ? '··' : String(s.value).padStart(2, '0')}
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* SERVICES */}
       <section className="pb-24">
         <div className="flex items-end justify-between mb-8">
           <div className="flex items-center gap-3">
