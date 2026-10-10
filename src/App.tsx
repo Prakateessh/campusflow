@@ -1,4 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import type { ReactElement } from 'react';
+import { AuthProvider } from './lib/auth';
+import RequireAuth from './components/RequireAuth';
 import Home from './pages/Home';
 import Facilities from './pages/Facilities';
 import FacilityDetail from './pages/FacilityDetail';
@@ -13,24 +16,28 @@ import AdminQueue from './pages/AdminQueue';
 import Login from './pages/Login';
 import NotFound from './pages/NotFound';
 
+const protect = (el: ReactElement) => <RequireAuth>{el}</RequireAuth>;
+
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<Home />} />
-        <Route path="/facilities" element={<Facilities />} />
-        <Route path="/facilities/:id" element={<FacilityDetail />} />
-        <Route path="/requests" element={<Requests />} />
-        <Route path="/requests/:id" element={<RequestDetail />} />
-        <Route path="/canteen" element={<Canteen />} />
-        <Route path="/library" element={<Library />} />
-        <Route path="/sports" element={<Sports />} />
-        <Route path="/store" element={<Store />} />
-        <Route path="/assistant" element={<Assistant />} />
-        <Route path="/admin" element={<AdminQueue />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/" element={protect(<Home />)} />
+          <Route path="/facilities" element={protect(<Facilities />)} />
+          <Route path="/facilities/:id" element={protect(<FacilityDetail />)} />
+          <Route path="/requests" element={protect(<Requests />)} />
+          <Route path="/requests/:id" element={protect(<RequestDetail />)} />
+          <Route path="/canteen" element={protect(<Canteen />)} />
+          <Route path="/library" element={protect(<Library />)} />
+          <Route path="/sports" element={protect(<Sports />)} />
+          <Route path="/store" element={protect(<Store />)} />
+          <Route path="/assistant" element={protect(<Assistant />)} />
+          <Route path="/admin" element={protect(<AdminQueue />)} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

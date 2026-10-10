@@ -1,10 +1,50 @@
+import { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../lib/auth';
+
+interface BackTarget {
+  label: string;
+  to: string;
+}
+
+function getBackTarget(pathname: string): BackTarget | null {
+  if (pathname === '/') return null;
+
+  // Child of a section → return to the section
+  if (pathname.startsWith('/facilities/')) {
+    return { label: 'All facilities', to: '/facilities' };
+  }
+  if (pathname.startsWith('/requests/')) {
+    return { label: 'My requests', to: '/requests' };
+  }
+
+  // Section index → return to home
+  const homeChildren = [
+    '/facilities',
+    '/requests',
+    '/canteen',
+    '/library',
+    '/sports',
+    '/store',
+    '/assistant',
+    '/admin',
+  ];
+  if (homeChildren.includes(pathname)) {
+    return { label: 'Home', to: '/' };
+  }
+
+  // Fallback
+  return { label: 'Home', to: '/' };
+}
 
 export default function Header() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const isHome = pathname === '/';
-  const user = { name: 'Ashwin Raj', dept: 'CSE', year: 'Semester 5' };
+  const { user, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const back = getBackTarget(pathname);
 
   const linkClass = (path: string, exact = false) => {
     const active = exact ? pathname === path : pathname.startsWith(path);
@@ -13,22 +53,47 @@ export default function Header() {
       : 'label hover:text-[var(--color-ink)] transition';
   };
 
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  // Close menu on route change
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+
+  const handleSignOut = () => {
+    logout();
+    navigate('/login');
+  };
+
   return (
-    <header className="bg-[var(--color-card)]">
+    <header className="bg-[var(--color-card)] sticky top-0 z-40">
       <div className="mx-auto max-w-[1200px] px-6 md:px-10 h-20 flex items-center justify-between">
 
-        {/* Left — back (only on sub-pages) + logo */}
+        {/* Left — back + logo */}
         <div className="flex items-center gap-4">
-          {!isHome && (
+          {back && (
             <>
-              <button
-                onClick={() => navigate(-1)}
-                aria-label="Back"
-                className="h-8 w-8 flex items-center justify-center border border-[var(--color-rule)] text-[var(--color-ink-2)] hover:border-[var(--color-ink)] hover:text-[var(--color-ink)] transition-colors"
+              <Link
+                to={back.to}
+                className="group flex items-center gap-2 text-[var(--color-ink-3)] hover:text-[var(--color-accent)] transition-colors"
+                aria-label={`Back to ${back.label}`}
               >
-                ←
-              </button>
-              <span className="w-px h-6 bg-[var(--color-rule)]" />
+                <span className="text-[16px] leading-none transition-transform group-hover:-translate-x-0.5">
+                  ←
+                </span>
+                <span className="hidden md:inline label group-hover:text-[var(--color-accent)] transition-colors">
+                  {back.label}
+                </span>
+              </Link>
+              <span className="hidden md:block w-px h-6 bg-[var(--color-rule)]" />
             </>
           )}
 
@@ -43,6 +108,7 @@ export default function Header() {
           </Link>
         </div>
 
+        {/* Center — nav */}
         <nav className="hidden md:flex items-center gap-8">
           <Link to="/"           className={linkClass('/', true)}>Home</Link>
           <Link to="/facilities" className={linkClass('/facilities')}>Facilities</Link>
@@ -50,23 +116,66 @@ export default function Header() {
           <Link to="/admin"      className={linkClass('/admin')}>Queue</Link>
         </nav>
 
-        <div className="flex items-center gap-6">
-          <div className="hidden md:flex flex-col items-end leading-tight">
-            <span className="text-[14px] text-[var(--color-ink)]">{user.name}</span>
-            <span className="label text-[10px] text-[var(--color-ink-4)] mt-0.5">
-              {user.dept} · {user.year}
-            </span>
-          </div>
+        {/* Right — user menu */}
+        {user && (
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              className="flex items-center gap-3 group"
+            >
+              <div className="hidden md:flex flex-col items-end leading-tight">
+                <span className="text-[14px] text-[var(--color-ink)]">{user.name}</span>
+                <span className="label text-[10px] text-[var(--color-ink-4)] mt-0.5">
+                  {user.department}
+                  {user.year ? ` · ${user.year}` : ''}
+                </span>
+              </div>
+              <div className="h-10 w-10 bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent-hover)] flex items-center justify-center transition-transform group-hover:scale-105">
+                <span className="font-display text-white text-[15px] leading-none pt-px">
+                  {user.initials}
+                </span>
+              </div>
+            </button>
 
-          <Link to="/requests" className="group relative" aria-label="My requests">
-            <div className="h-10 w-10 bg-[var(--color-accent)] flex items-center justify-center transition-transform group-hover:scale-105">
-              <span className="font-display text-white text-[16px] leading-none pt-px">A</span>
-            </div>
-          </Link>
-        </div>
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-60 bg-[var(--color-card)] border border-[var(--color-rule)] shadow-lg z-50">
+                <div className="px-4 py-3 border-b border-[var(--color-rule)]">
+                  <p className="text-[14px]">{user.name}</p>
+                  <p className="mt-0.5 text-[12px] text-[var(--color-ink-3)] truncate">
+                    {user.email}
+                  </p>
+                </div>
+
+                <Link
+                  to="/requests"
+                  className="block px-4 py-3 text-[14px] hover:bg-[var(--color-surface-low)] transition-colors"
+                >
+                  My requests
+                </Link>
+
+                {user.role === 'admin' || user.role === 'technician' || user.role === 'faculty' ? (
+                  <Link
+                    to="/admin"
+                    className="block px-4 py-3 text-[14px] hover:bg-[var(--color-surface-low)] transition-colors border-t border-[var(--color-rule)]"
+                  >
+                    Approval queue
+                  </Link>
+                ) : null}
+
+                <button
+                  onClick={handleSignOut}
+                  className="w-full text-left px-4 py-3 text-[14px] text-[var(--color-accent)] hover:bg-[var(--color-surface-low)] transition-colors border-t border-[var(--color-rule)]"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="h-px bg-[var(--color-accent)]" />
+      {/* Gradient rule */}
+      <div className="h-px bg-gradient-to-r from-[var(--color-accent)] via-[var(--color-accent)] to-transparent" />
     </header>
   );
 }
