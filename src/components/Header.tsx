@@ -127,7 +127,6 @@ export default function Header() {
                 <span className="text-[14px] text-[var(--color-ink)]">{user.name}</span>
                 <span className="label text-[10px] text-[var(--color-ink-4)] mt-0.5">
                   {user.department}
-                  {user.year ? ` · ${user.year}` : ''}
                 </span>
               </div>
               <div className="h-10 w-10 bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent-hover)] flex items-center justify-center transition-transform group-hover:scale-105">

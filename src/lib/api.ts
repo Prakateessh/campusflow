@@ -52,26 +52,28 @@ export interface RequestListItem {
   kind: string;
   title: string;
   status: string;
+  purpose: string | null;
+  return_by: string | null;
   scheduled_start: string | null;
   scheduled_end: string | null;
   created_at: string;
   approved_at: string | null;
-  facility_id: number;
-  facility_code: string;
-  facility_name: string;
+  facility_id: number | null;
+  facility_code: string | null;
+  facility_name: string | null;
   requester_name: string;
 }
 
 export interface RequestDetail {
   request: RequestListItem & {
-    description: string;
+    description: string | null;
     requester_id: number;
     requester_email: string;
     sponsor_id: number | null;
     sponsor_name: string | null;
     sponsor_email: string | null;
     sponsor_dept: string | null;
-    facility_category: string;
+    facility_category: string | null;
     submitted_at: string | null;
     completed_at: string | null;
   };
