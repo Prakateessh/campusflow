@@ -1,5 +1,4 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';

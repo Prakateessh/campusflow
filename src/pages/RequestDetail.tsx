@@ -102,12 +102,6 @@ export default function RequestDetail() {
     });
   };
 
-  const formatShortDate = (iso: string | null) => {
-    if (!iso) return null;
-    const d = new Date(iso.replace(' ', 'T'));
-    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-  };
-
   // Build timeline from request + approvals
   const timeline: Array<{
     label: string;
