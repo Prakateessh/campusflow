@@ -1,94 +1,91 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { getRequests, type RequestListItem } from '../lib/api';
 
-type Status = 'pending' | 'approved' | 'ready' | 'completed' | 'rejected';
-
-interface RequestRow {
-  id: string;
-  title: string;
-  facility: string;
-  category: string;
-  status: Status;
-  when: string;
-  submitted: string;
-}
-
-const REQUESTS: RequestRow[] = [
-  {
-    id: 'R-1042', title: 'Raspberry Pi + bench slot', facility: 'Embedded Computing Laboratory',
-    category: 'Electronics', status: 'approved', when: 'Yesterday', submitted: '12 Oct 2026',
-  },
-  {
-    id: 'R-1043', title: 'SEM imaging — 3 PCB samples', facility: 'Central Instrumentation Facility',
-    category: 'Chemical', status: 'pending', when: '6h ago', submitted: '13 Oct 2026',
-  },
-  {
-    id: 'R-1044', title: 'Lunch — 2× Masala Dosa', facility: 'Canteens',
-    category: 'General', status: 'ready', when: 'in 3h', submitted: '13 Oct 2026',
-  },
-  {
-    id: 'R-1039', title: 'VLSI FPGA board — 1 week loan', facility: 'VLSI Design – UG Laboratory',
-    category: 'Electronics', status: 'completed', when: '3 days ago', submitted: '08 Oct 2026',
-  },
-  {
-    id: 'R-1038', title: 'Cybersecurity capture-the-flag setup', facility: 'Cyber Security Lab',
-    category: 'Computing & AI', status: 'completed', when: '5 days ago', submitted: '06 Oct 2026',
-  },
-  {
-    id: 'R-1037', title: 'Welding — drone frame bracket', facility: 'Welding Lab',
-    category: 'Mechanical', status: 'rejected', when: '1 week ago', submitted: '04 Oct 2026',
-  },
-  {
-    id: 'R-1035', title: '3D print — robot chassis', facility: 'Additive Manufacturing Lab',
-    category: 'Innovation', status: 'completed', when: '2 weeks ago', submitted: '28 Sep 2026',
-  },
-];
-
-const STATUS_LABEL: Record<Status, string> = {
-  pending:   'Pending',
-  approved:  'Approved',
-  ready:     'Ready',
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft',
+  submitted: 'Submitted',
+  pending_approval: 'Pending',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  scheduled: 'Scheduled',
+  in_progress: 'In Progress',
   completed: 'Completed',
-  rejected:  'Rejected',
+  cancelled: 'Cancelled',
+  overdue: 'Overdue',
+  ready: 'Ready',
 };
 
 export default function Requests() {
-  const [filter, setFilter] = useState<Status | 'all'>('all');
+  const [requests, setRequests] = useState<RequestListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getRequests({ user_id: 8 })
+      .then((data) => {
+        if (!cancelled) setRequests(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = useMemo(
-    () => (filter === 'all' ? REQUESTS : REQUESTS.filter((r) => r.status === filter)),
-    [filter],
+    () =>
+      filter === 'all'
+        ? requests
+        : requests.filter((r) => {
+            if (filter === 'pending') return r.status === 'pending_approval' || r.status === 'submitted';
+            if (filter === 'approved') return r.status === 'approved' || r.status === 'scheduled';
+            return r.status === filter;
+          }),
+    [requests, filter],
   );
 
-  const counts = useMemo(() => ({
-    all:       REQUESTS.length,
-    pending:   REQUESTS.filter((r) => r.status === 'pending').length,
-    approved:  REQUESTS.filter((r) => r.status === 'approved').length,
-    ready:     REQUESTS.filter((r) => r.status === 'ready').length,
-    completed: REQUESTS.filter((r) => r.status === 'completed').length,
-    rejected:  REQUESTS.filter((r) => r.status === 'rejected').length,
-  }), []);
+  const counts = useMemo(
+    () => ({
+      all: requests.length,
+      pending: requests.filter((r) => r.status === 'pending_approval' || r.status === 'submitted').length,
+      approved: requests.filter((r) => r.status === 'approved' || r.status === 'scheduled').length,
+      completed: requests.filter((r) => r.status === 'completed').length,
+      rejected: requests.filter((r) => r.status === 'rejected').length,
+    }),
+    [requests],
+  );
 
-  const statusStyle = (s: Status) => {
-    if (s === 'ready')     return 'label label-accent';
-    if (s === 'pending')   return 'label label-ink';
-    if (s === 'rejected')  return 'label';
+  const statusStyle = (s: string) => {
+    if (s === 'ready' || s === 'scheduled') return 'label label-accent';
+    if (s === 'pending_approval' || s === 'submitted') return 'label label-ink';
     return 'label';
   };
 
-  const filters: Array<{ id: Status | 'all'; label: string; count: number }> = [
+  const formatDate = (iso: string | null) => {
+    if (!iso) return '—';
+    const d = new Date(iso.replace(' ', 'T'));
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  };
+
+  const filters = [
     { id: 'all',       label: 'All',       count: counts.all },
     { id: 'pending',   label: 'Pending',   count: counts.pending },
     { id: 'approved',  label: 'Approved',  count: counts.approved },
-    { id: 'ready',     label: 'Ready',     count: counts.ready },
     { id: 'completed', label: 'Completed', count: counts.completed },
     { id: 'rejected',  label: 'Rejected',  count: counts.rejected },
   ];
 
   return (
     <Layout>
-      {/* HEADING */}
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
@@ -96,12 +93,11 @@ export default function Requests() {
             <h1 className="text-2xl md:text-3xl">My requests</h1>
           </div>
           <span className="label num">
-            {String(filtered.length).padStart(2, '0')} / {REQUESTS.length}
+            {loading ? '···' : `${String(filtered.length).padStart(2, '0')} / ${requests.length}`}
           </span>
         </div>
       </section>
 
-      {/* FILTERS */}
       <section className="pb-8">
         <div className="flex flex-wrap gap-2">
           {filters.map((f) => (
@@ -119,10 +115,14 @@ export default function Requests() {
         </div>
       </section>
 
-      {/* LIST */}
       <section className="pb-24">
+        {error && (
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+          </div>
+        )}
+
         <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
-          {/* Header row */}
           <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
             <span className="col-span-2 label">ID</span>
             <span className="col-span-5 label">Request</span>
@@ -130,35 +130,40 @@ export default function Requests() {
             <span className="col-span-2 label text-right">Status</span>
           </div>
 
-          {/* Rows */}
           <div className="divide-y divide-[var(--color-rule)]">
-            {filtered.map((r) => (
-              <Link
-                key={r.id}
-                to={`/requests/${r.id}`}
-                className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 px-6 py-5 items-center transition-colors hover:bg-[var(--color-surface-low)]"
-              >
-                <div className="md:col-span-2 flex flex-col gap-1">
-                  <span className="label num">{r.id}</span>
-                  <span className="text-[12px] text-[var(--color-ink-4)] num">{r.submitted}</span>
-                </div>
-                <span className="md:col-span-5 text-[16px]">{r.title}</span>
-                <span className="md:col-span-3 text-[15px] text-[var(--color-ink-3)]">
-                  {r.facility}
-                </span>
-                <span className={`md:col-span-2 md:text-right ${statusStyle(r.status)}`}>
-                  {STATUS_LABEL[r.status]} · {r.when}
-                </span>
-              </Link>
-            ))}
+            {loading ? (
+              <div className="py-24 text-center">
+                <span className="label">Loading…</span>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="py-24 text-center">
+                <span className="label">No requests match this filter</span>
+              </div>
+            ) : (
+              filtered.map((r) => (
+                <Link
+                  key={r.id}
+                  to={`/requests/${r.id}`}
+                  className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 px-6 py-5 items-center transition-colors hover:bg-[var(--color-surface-low)]"
+                >
+                  <div className="md:col-span-2 flex flex-col gap-1">
+                    <span className="label num">R-{String(r.id).padStart(4, '0')}</span>
+                    <span className="text-[12px] text-[var(--color-ink-4)] num">
+                      {formatDate(r.created_at)}
+                    </span>
+                  </div>
+                  <span className="md:col-span-5 text-[16px]">{r.title}</span>
+                  <span className="md:col-span-3 text-[15px] text-[var(--color-ink-3)]">
+                    {r.facility_name}
+                  </span>
+                  <span className={`md:col-span-2 md:text-right ${statusStyle(r.status)}`}>
+                    {STATUS_LABEL[r.status] ?? r.status}
+                  </span>
+                </Link>
+              ))
+            )}
           </div>
         </div>
-
-        {filtered.length === 0 && (
-          <div className="py-24 text-center">
-            <span className="label">No requests match this filter</span>
-          </div>
-        )}
       </section>
     </Layout>
   );

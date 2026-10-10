@@ -1,97 +1,124 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
 interface Book {
   id: number;
   isbn: string;
   title: string;
   author: string;
-  shelf: string;
-  total: number;
-  available: number;
-  borrowedByYou?: { dueDate: string; daysLeft: number; overdue: boolean };
+  total_copies: number;
+  available_copies: number;
+  shelf_code: string;
 }
 
-const BOOKS: Book[] = [
-  { id: 1,  isbn: '978-0132350884', title: 'Clean Code',                               author: 'Robert C. Martin',   shelf: 'CS-A-01', total: 5, available: 2 },
-  { id: 2,  isbn: '978-0201616224', title: 'The Pragmatic Programmer',                 author: 'Hunt & Thomas',      shelf: 'CS-A-02', total: 4, available: 3 },
-  { id: 3,  isbn: '978-0262033848', title: 'Introduction to Algorithms',               author: 'CLRS',               shelf: 'CS-A-03', total: 6, available: 4, borrowedByYou: { dueDate: '22 Oct 2026', daysLeft: 9,  overdue: false } },
-  { id: 4,  isbn: '978-0201633610', title: 'Design Patterns',                          author: 'Gang of Four',       shelf: 'CS-A-04', total: 3, available: 1 },
-  { id: 5,  isbn: '978-0134610993', title: 'Artificial Intelligence: A Modern Approach', author: 'Russell & Norvig', shelf: 'CS-B-01', total: 4, available: 2, borrowedByYou: { dueDate: '18 Oct 2026', daysLeft: 5,  overdue: false } },
-  { id: 6,  isbn: '978-0131873742', title: 'Digital Signal Processing',                author: 'Proakis & Manolakis',shelf: 'EC-A-01', total: 5, available: 3 },
-  { id: 7,  isbn: '978-0190853464', title: 'Microelectronic Circuits',                 author: 'Sedra & Smith',      shelf: 'EC-A-02', total: 6, available: 4, borrowedByYou: { dueDate: '10 Oct 2026', daysLeft: -3, overdue: true } },
-  { id: 8,  isbn: '978-0138147570', title: 'Signals and Systems',                      author: 'Oppenheim & Willsky',shelf: 'EC-A-03', total: 5, available: 2 },
-  { id: 9,  isbn: '978-0132126953', title: 'Computer Networks',                        author: 'Tanenbaum',          shelf: 'CS-C-01', total: 4, available: 2 },
-  { id: 10, isbn: '978-1118063330', title: 'Operating System Concepts',                author: 'Silberschatz',       shelf: 'CS-C-02', total: 5, available: 3 },
-  { id: 11, isbn: '978-0133918922', title: 'Engineering Mechanics: Statics',           author: 'Hibbeler',           shelf: 'ME-A-01', total: 4, available: 2 },
-  { id: 12, isbn: '978-8131808146', title: 'Strength of Materials',                    author: 'R.K. Bansal',        shelf: 'ME-A-02', total: 6, available: 5 },
-  { id: 13, isbn: '978-0073398273', title: 'Fluid Mechanics',                          author: 'Cengel & Cimbala',   shelf: 'ME-A-03', total: 3, available: 1 },
-  { id: 14, isbn: '978-0073402611', title: 'Organic Chemistry',                        author: 'Morrison & Boyd',    shelf: 'CH-A-01', total: 4, available: 3 },
-  { id: 15, isbn: '978-0980232776', title: 'Linear Algebra Done Right',                author: 'Sheldon Axler',      shelf: 'MA-A-01', total: 3, available: 2 },
-];
-
-type Filter = 'all' | 'available' | 'borrowed' | 'overdue';
+type Filter = 'all' | 'available' | 'out';
 
 export default function Library() {
+  const [books, setBooks] = useState<Book[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [renewals, setRenewals] = useState<Record<number, boolean>>({});
-  const [confirmed, setConfirmed] = useState<number | null>(null);
+  const [renewing, setRenewing] = useState<number | null>(null);
+  const [renewed, setRenewed] = useState<Record<number, { due_date: string; days: number }>>({});
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return BOOKS.filter((b) => {
-      const matchesQuery =
-        q === '' ||
-        b.title.toLowerCase().includes(q) ||
-        b.author.toLowerCase().includes(q) ||
-        b.isbn.toLowerCase().includes(q);
+  // Debounce search + fetch
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
 
-      const matchesFilter =
-        filter === 'all' ? true :
-        filter === 'available' ? b.available > 0 :
-        filter === 'borrowed'  ? !!b.borrowedByYou :
-        filter === 'overdue'   ? !!b.borrowedByYou?.overdue : true;
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams();
+      if (query.trim()) params.set('q', query.trim());
+      if (filter === 'available') params.set('filter', 'available');
+      if (filter === 'out') params.set('filter', 'out');
 
-      return matchesQuery && matchesFilter;
-    });
+      fetch(`${API_BASE}/api/library/books?${params.toString()}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (!cancelled) setBooks(data.books ?? []);
+        })
+        .catch((err) => {
+          if (!cancelled) setError(err.message);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [query, filter]);
 
-  const borrowedCount = BOOKS.filter((b) => b.borrowedByYou).length;
-  const overdueCount = BOOKS.filter((b) => b.borrowedByYou?.overdue).length;
+  const counts = useMemo(
+    () => ({
+      all: books.length,
+      available: books.filter((b) => b.available_copies > 0).length,
+      out: books.filter((b) => b.available_copies === 0).length,
+    }),
+    [books],
+  );
+
+  const handleRenew = async (book: Book) => {
+    if (renewing) return;
+    setRenewing(book.id);
+    setError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/library/renew`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: 8, book_id: book.id }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message ?? `Renewal failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      setRenewed((r) => ({
+        ...r,
+        [book.id]: { due_date: data.due_date, days: data.days },
+      }));
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to renew');
+    } finally {
+      setRenewing(null);
+    }
+  };
+
+  const formatDueDate = (iso: string) => {
+    const d = new Date(iso.replace(' ', 'T'));
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  };
 
   const filters: Array<{ id: Filter; label: string; count: number }> = [
-    { id: 'all',       label: 'All',        count: BOOKS.length },
-    { id: 'available', label: 'Available',  count: BOOKS.filter((b) => b.available > 0).length },
-    { id: 'borrowed',  label: 'Borrowed',   count: borrowedCount },
-    { id: 'overdue',   label: 'Overdue',    count: overdueCount },
+    { id: 'all', label: 'All', count: counts.all },
+    { id: 'available', label: 'Available', count: counts.available },
+    { id: 'out', label: 'Out', count: counts.out },
   ];
-
-  const toggleRenew = (id: number) => {
-    setRenewals((r) => ({ ...r, [id]: !r[id] }));
-  };
-
-  const confirmRenewal = (id: number) => {
-    setConfirmed(id);
-    setTimeout(() => setConfirmed(null), 2400);
-  };
 
   return (
     <Layout>
-      {/* HEADING */}
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
             <span className="w-8 h-px bg-[var(--color-accent)]" />
             <h1 className="text-2xl md:text-3xl">Library</h1>
           </div>
-          <span className="label">
-            {borrowedCount} borrowed{overdueCount > 0 ? ` · ${overdueCount} overdue` : ''}
+          <span className="label num">
+            {loading ? '···' : `${String(books.length).padStart(2, '0')} shown`}
           </span>
         </div>
       </section>
 
-      {/* SEARCH + FILTERS */}
       <section className="pb-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
           <div className="flex flex-wrap gap-2">
@@ -119,10 +146,14 @@ export default function Library() {
         </div>
       </section>
 
-      {/* BOOK LIST */}
       <section className="pb-24">
+        {error && (
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+          </div>
+        )}
+
         <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
-          {/* Header */}
           <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
             <span className="col-span-5 label">Title</span>
             <span className="col-span-3 label">Author</span>
@@ -131,84 +162,69 @@ export default function Library() {
           </div>
 
           <div className="divide-y divide-[var(--color-rule)]">
-            {filtered.map((b) => {
-              const borrowed = b.borrowedByYou;
-              const isRenewing = renewals[b.id];
-              const wasConfirmed = confirmed === b.id;
+            {loading ? (
+              <div className="py-24 text-center">
+                <span className="label">Loading…</span>
+              </div>
+            ) : books.length === 0 ? (
+              <div className="py-24 text-center">
+                <span className="label">No books match your search</span>
+              </div>
+            ) : (
+              books.map((b) => {
+                const renewal = renewed[b.id];
+                const isRenewing = renewing === b.id;
 
-              return (
-                <div
-                  key={b.id}
-                  className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 px-6 py-5 items-center transition-colors hover:bg-[var(--color-surface-low)]"
-                >
-                  <div className="md:col-span-5">
-                    <h3 className="text-[16px] leading-snug">{b.title}</h3>
-                    <p className="mt-1 text-[13px] text-[var(--color-ink-4)] num">{b.isbn}</p>
-                  </div>
+                return (
+                  <div
+                    key={b.id}
+                    className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 px-6 py-5 items-center transition-colors hover:bg-[var(--color-surface-low)]"
+                  >
+                    <div className="md:col-span-5">
+                      <h3 className="text-[16px] leading-snug">{b.title}</h3>
+                      <p className="mt-1 text-[13px] text-[var(--color-ink-4)] num">{b.isbn}</p>
+                    </div>
 
-                  <span className="md:col-span-3 text-[15px] text-[var(--color-ink-3)]">
-                    {b.author}
-                  </span>
+                    <span className="md:col-span-3 text-[15px] text-[var(--color-ink-3)]">
+                      {b.author}
+                    </span>
 
-                  <span className="md:col-span-2 text-[14px] num text-[var(--color-ink-3)]">
-                    {b.shelf}
-                  </span>
+                    <span className="md:col-span-2 text-[14px] num text-[var(--color-ink-3)]">
+                      {b.shelf_code}
+                    </span>
 
-                  {/* Right — status OR renew action */}
-                  <div className="md:col-span-2 md:text-right">
-                    {borrowed ? (
-                      wasConfirmed ? (
-                        <span className="label label-accent">Renewed · 14 days</span>
-                      ) : isRenewing ? (
-                        <div className="flex items-center md:justify-end gap-2">
+                    <div className="md:col-span-2 md:text-right">
+                      {renewal ? (
+                        <span className="label label-accent">
+                          Renewed · due {formatDueDate(renewal.due_date)}
+                        </span>
+                      ) : (
+                        <div className="flex items-center md:justify-end gap-3">
+                          <span className="label">
+                            {b.available_copies > 0
+                              ? `${String(b.available_copies).padStart(2, '0')} available`
+                              : 'Out'}
+                          </span>
                           <button
-                            onClick={() => toggleRenew(b.id)}
-                            className="label hover:text-[var(--color-ink)] transition-colors"
+                            onClick={() => handleRenew(b)}
+                            disabled={isRenewing}
+                            className="text-[12px] label hover:text-[var(--color-accent)] transition-colors disabled:opacity-30"
                           >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={() => confirmRenewal(b.id)}
-                            className="btn btn-accent text-[12px] py-1.5 px-3"
-                          >
-                            Renew
+                            {isRenewing ? '···' : 'Renew'}
                           </button>
                         </div>
-                      ) : (
-                        <button
-                          onClick={() => toggleRenew(b.id)}
-                          className="text-right"
-                        >
-                          {borrowed.overdue ? (
-                            <span className="label label-accent">
-                              Overdue · {Math.abs(borrowed.daysLeft)}d
-                            </span>
-                          ) : (
-                            <span className="label">
-                              Due in {borrowed.daysLeft}d
-                            </span>
-                          )}
-                        </button>
-                      )
-                    ) : b.available > 0 ? (
-                      <span className="label">
-                        {String(b.available).padStart(2, '0')} available
-                      </span>
-                    ) : (
-                      <span className="label">Unavailable</span>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
-        {filtered.length === 0 && (
-          <div className="py-24 text-center">
-            <span className="label">No books match your search</span>
-          </div>
-        )}
+        <div className="mt-6 text-[13px] text-[var(--color-ink-4)] leading-relaxed">
+          <span className="label">Note</span> · Renewals extend your loan by 14 days from today.
+        </div>
       </section>
     </Layout>
   );
