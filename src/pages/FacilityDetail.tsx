@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import { useAuth, getUsers, type DirectoryUser } from '../lib/auth';
+import { useAuth } from '../lib/auth';
 import { getFacility, type Facility } from '../lib/api';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
@@ -22,6 +22,13 @@ interface FormItem {
   unit: string;
 }
 
+interface Advisor {
+  id: number;
+  name: string;
+  email: string;
+  department: string;
+}
+
 export default function FacilityDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -32,10 +39,12 @@ export default function FacilityDetail() {
   const [error, setError] = useState<string | null>(null);
 
   const [showForm, setShowForm] = useState(false);
-  const [faculty, setFaculty] = useState<DirectoryUser[]>([]);
+  const [advisors, setAdvisors] = useState<Advisor[]>([]);
+  const [advisorsLoading, setAdvisorsLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Form state
   const [purpose, setPurpose] = useState('');
   const [description, setDescription] = useState('');
   const [sponsorId, setSponsorId] = useState<number | ''>('');
@@ -49,6 +58,7 @@ export default function FacilityDetail() {
   const [draftItemUnit, setDraftItemUnit] = useState('piece');
   const [confirmed, setConfirmed] = useState(false);
 
+  // Fetch facility
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -73,12 +83,26 @@ export default function FacilityDetail() {
     };
   }, [id]);
 
+  // Fetch advisors when the form opens
   useEffect(() => {
-    if (!showForm || faculty.length > 0) return;
-    getUsers('faculty')
-      .then(setFaculty)
-      .catch(() => {});
-  }, [showForm, faculty.length]);
+    if (!showForm || !user || advisors.length > 0) return;
+    let cancelled = false;
+    setAdvisorsLoading(true);
+
+    fetch(`${API_BASE}/api/student-advisors?student_id=${user.id}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setAdvisors(data.advisors ?? []);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setAdvisorsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showForm, user, advisors.length]);
 
   const resetForm = () => {
     setPurpose('');
@@ -200,7 +224,6 @@ export default function FacilityDetail() {
   }
 
   const categoryLabel = CATEGORY_LABELS[facility.category] ?? facility.category;
-  const hasSponsor = user?.sponsor_id != null;
 
   return (
     <Layout>
@@ -265,34 +288,15 @@ export default function FacilityDetail() {
 
           <aside className="col-span-12 lg:col-span-4 space-y-8">
             <div className="space-y-3">
-              {hasSponsor ? (
-                <>
-                  <button
-                    onClick={() => setShowForm(true)}
-                    className="btn btn-accent w-full text-sm"
-                  >
-                    Request access
-                  </button>
-                  <p className="text-[12px] text-[var(--color-ink-4)] text-center leading-relaxed">
-                    Requires a faculty sponsor, a stated purpose, and a list of items.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <button
-                    disabled
-                    className="btn btn-accent w-full text-sm opacity-30 cursor-not-allowed"
-                  >
-                    Request access
-                  </button>
-                  <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3">
-                    <p className="text-[12px] text-[var(--color-accent)] leading-relaxed">
-                      No faculty sponsor assigned to your account. Contact your
-                      department office to get one before submitting requests.
-                    </p>
-                  </div>
-                </>
-              )}
+              <button
+                onClick={() => setShowForm(true)}
+                className="btn btn-accent w-full text-sm"
+              >
+                Request access
+              </button>
+              <p className="text-[12px] text-[var(--color-ink-4)] text-center leading-relaxed">
+                Requires a faculty sponsor, a stated purpose, and a list of items.
+              </p>
             </div>
 
             {facility.contact && (
@@ -401,15 +405,23 @@ export default function FacilityDetail() {
                 <select
                   value={sponsorId}
                   onChange={(e) => setSponsorId(e.target.value ? Number(e.target.value) : '')}
-                  className="input cursor-pointer"
+                  disabled={advisorsLoading}
+                  className="input cursor-pointer disabled:opacity-50"
                 >
-                  <option value="">Select a faculty member</option>
-                  {faculty.map((f) => (
+                  <option value="">
+                    {advisorsLoading ? 'Loading advisors…' : 'Select a faculty member'}
+                  </option>
+                  {advisors.map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.name} · {f.department}
                     </option>
                   ))}
                 </select>
+                {!advisorsLoading && advisors.length === 0 && (
+                  <p className="mt-1 text-[11px] text-[var(--color-accent)]">
+                    No advisors available for your account.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">

@@ -527,6 +527,30 @@ export default {
         return json({ users: result.results }, cors);
       }
 
+            // ═══════════════════════════════════════════════════════════
+      // GET /api/student-advisors?student_id=X
+      //   Faculty a student can pick as sponsor
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/student-advisors' && request.method === 'GET') {
+        const studentId = url.searchParams.get('student_id');
+        if (!studentId) {
+          return json({ error: 'student_id is required' }, cors, 400);
+        }
+
+        const result = await env.campusflow_db
+          .prepare(`
+            SELECT u.id, u.name, u.email, u.department
+            FROM student_advisors sa
+            JOIN users u ON u.id = sa.advisor_id
+            WHERE sa.student_id = ?
+            ORDER BY u.department, u.name
+          `)
+          .bind(Number(studentId))
+          .all();
+
+        return json({ advisors: result.results }, cors);
+      }
+
       // ═══════════════════════════════════════════════════════════
       // POST /api/auth/login
       // ═══════════════════════════════════════════════════════════
