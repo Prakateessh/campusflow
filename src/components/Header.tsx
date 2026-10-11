@@ -10,15 +10,13 @@ interface BackTarget {
 function getBackTarget(pathname: string): BackTarget | null {
   if (pathname === '/') return null;
 
-  // Child of a section → return to the section
   if (pathname.startsWith('/facilities/')) {
-    return { label: 'All facilities', to: '/facilities' };
+    return { label: 'All labs', to: '/facilities' };
   }
   if (pathname.startsWith('/requests/')) {
     return { label: 'My requests', to: '/requests' };
   }
 
-  // Section index → return to home
   const homeChildren = [
     '/facilities',
     '/requests',
@@ -33,7 +31,6 @@ function getBackTarget(pathname: string): BackTarget | null {
     return { label: 'Home', to: '/' };
   }
 
-  // Fallback
   return { label: 'Home', to: '/' };
 }
 
@@ -63,7 +60,6 @@ export default function Header() {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  // Close menu on route change
   useEffect(() => {
     setMenuOpen(false);
   }, [pathname]);
@@ -73,11 +69,27 @@ export default function Header() {
     navigate('/login');
   };
 
+  // Role-based nav visibility
+  const canSeeFacilities =
+    user?.role === 'student' ||
+    user?.role === 'faculty' ||
+    user?.role === 'technician' ||
+    user?.role === 'admin';
+
+  const canSeeAssistant =
+    user?.role === 'student' ||
+    user?.role === 'faculty' ||
+    user?.role === 'admin';
+
+  const canSeeQueue =
+    user?.role === 'faculty' ||
+    user?.role === 'technician' ||
+    user?.role === 'admin';
+
   return (
     <header className="bg-[var(--color-card)] sticky top-0 z-40">
       <div className="mx-auto max-w-[1200px] px-6 md:px-10 h-20 flex items-center justify-between">
 
-        {/* Left — back + logo */}
         <div className="flex items-center gap-4">
           {back && (
             <>
@@ -108,15 +120,22 @@ export default function Header() {
           </Link>
         </div>
 
-        {/* Center — nav */}
         <nav className="hidden md:flex items-center gap-8">
-          <Link to="/"           className={linkClass('/', true)}>Home</Link>
-          <Link to="/facilities" className={linkClass('/facilities')}>Facilities</Link>
-          <Link to="/assistant"  className={linkClass('/assistant')}>Assistant</Link>
-          <Link to="/admin"      className={linkClass('/admin')}>Queue</Link>
+          <Link to="/" className={linkClass('/', true)}>Home</Link>
+
+          {canSeeFacilities && (
+            <Link to="/facilities" className={linkClass('/facilities')}>Labs</Link>
+          )}
+
+          {canSeeAssistant && (
+            <Link to="/assistant" className={linkClass('/assistant')}>Assistant</Link>
+          )}
+
+          {canSeeQueue && (
+            <Link to="/admin" className={linkClass('/admin')}>Queue</Link>
+          )}
         </nav>
 
-        {/* Right — user menu */}
         {user && (
           <div className="relative" ref={menuRef}>
             <button
@@ -152,14 +171,14 @@ export default function Header() {
                   My requests
                 </Link>
 
-                {user.role === 'admin' || user.role === 'technician' || user.role === 'faculty' ? (
+                {canSeeQueue && (
                   <Link
                     to="/admin"
                     className="block px-4 py-3 text-[14px] hover:bg-[var(--color-surface-low)] transition-colors border-t border-[var(--color-rule)]"
                   >
                     Approval queue
                   </Link>
-                ) : null}
+                )}
 
                 <button
                   onClick={handleSignOut}
@@ -173,7 +192,6 @@ export default function Header() {
         )}
       </div>
 
-      {/* Gradient rule */}
       <div className="h-px bg-gradient-to-r from-[var(--color-accent)] via-[var(--color-accent)] to-transparent" />
     </header>
   );

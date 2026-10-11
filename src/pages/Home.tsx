@@ -1,8 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { useAuth } from '../lib/auth';
 import { getRequests, type RequestListItem } from '../lib/api';
+
+interface ServiceTile {
+  name: string;
+  desc: string;
+  to: string;
+  image: string;
+}
+
+const ALL_SERVICES: ServiceTile[] = [
+  { name: 'Lab access', desc: 'Request equipment, components, or a supervised slot.', to: '/facilities', image: '/lab.jpeg' },
+  { name: 'Canteen',    desc: 'Pre-order meals for pickup at your chosen time.',     to: '/canteen',    image: '/canteen.jpeg' },
+  { name: 'Library',    desc: 'Renew your active loans.',                            to: '/library',    image: '/library.jpeg' },
+  { name: 'Sports',     desc: 'Borrow sports equipment.',                            to: '/sports',     image: '/sports.jpeg' },
+  { name: 'Stores',     desc: 'Reserve stationery and daily essentials.',            to: '/store',      image: '/store.jpeg' },
+];
+
+function getVisibleServiceNames(role: string, department: string): string[] {
+  if (role === 'admin') return ['Lab access', 'Canteen', 'Library', 'Sports', 'Stores'];
+  if (role === 'student' || role === 'faculty') return ['Lab access', 'Canteen', 'Library', 'Sports', 'Stores'];
+  if (role === 'technician') return ['Lab access'];
+  if (role === 'service_provider') {
+    if (department === 'Canteen') return ['Canteen'];
+    if (department === 'Library') return ['Library'];
+    return [];
+  }
+  return [];
+}
 
 export default function Home() {
   const { user } = useAuth();
@@ -48,13 +75,11 @@ export default function Home() {
     },
   ];
 
-  const services = [
-    { name: 'Lab access', desc: 'Request equipment, components, or a supervised slot.', to: '/facilities', image: '/lab.jpeg' },
-    { name: 'Canteen',    desc: 'Pre-order meals for pickup at your chosen time.',     to: '/canteen',    image: '/canteen.jpeg' },
-    { name: 'Library',    desc: 'Search the catalogue and renew books.',                to: '/library',    image: '/library.jpeg' },
-    { name: 'Sports',     desc: 'Borrow rackets, balls, and other gear.',               to: '/sports',     image: '/sports.jpeg' },
-    { name: 'Stores',     desc: 'Reserve stationery and daily essentials.',             to: '/store',      image: '/store.jpeg' },
-  ];
+  const visibleServices = useMemo(() => {
+    if (!user) return [];
+    const names = getVisibleServiceNames(user.role, user.department);
+    return ALL_SERVICES.filter((s) => names.includes(s.name));
+  }, [user?.role, user?.department]);
 
   const roleLabel: Record<string, string> = {
     student: 'Student',
@@ -62,6 +87,23 @@ export default function Home() {
     technician: 'Technician',
     service_provider: 'Service Provider',
     admin: 'Admin',
+  };
+
+  // Grid span classes based on tile count
+  const gridClass =
+    visibleServices.length === 1
+      ? 'grid-cols-1'
+      : visibleServices.length === 2
+      ? 'grid-cols-1 md:grid-cols-2'
+      : 'grid-cols-1 md:grid-cols-6';
+
+  const spanFor = (index: number, total: number) => {
+    if (total === 1) return 'md:col-span-1';
+    if (total === 2) return 'md:col-span-1';
+    if (total === 3) return 'md:col-span-2';
+    if (total === 4) return 'md:col-span-3';
+    // 5 tiles: 3 up, 2 down
+    return index < 3 ? 'md:col-span-2' : 'md:col-span-3';
   };
 
   return (
@@ -110,23 +152,24 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="pb-24">
-        <div className="flex items-end justify-between mb-8">
-          <div className="flex items-center gap-3">
-            <span className="section-rule" />
-            <h2 className="text-2xl md:text-3xl">Services</h2>
+      {visibleServices.length > 0 && (
+        <section className="pb-24">
+          <div className="flex items-end justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <span className="section-rule" />
+              <h2 className="text-2xl md:text-3xl">Services</h2>
+            </div>
+            <span className="label num">
+              {String(visibleServices.length).padStart(2, '0')} available
+            </span>
           </div>
-          <span className="label">05 available</span>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-6 border-t border-l border-[var(--color-rule)]">
-          {services.map((s, i) => {
-            const spanClass = i < 3 ? 'md:col-span-2' : 'md:col-span-3';
-            return (
+          <div className={`grid ${gridClass} border-t border-l border-[var(--color-rule)]`}>
+            {visibleServices.map((s, i) => (
               <Link
                 key={s.name}
                 to={s.to}
-                className={`group relative bg-[var(--color-card)] p-8 border-r border-b border-[var(--color-rule)] transition-colors overflow-hidden min-h-[320px] flex flex-col justify-between ${spanClass}`}
+                className={`group relative bg-[var(--color-card)] p-8 border-r border-b border-[var(--color-rule)] transition-colors overflow-hidden min-h-[280px] flex flex-col justify-between ${spanFor(i, visibleServices.length)}`}
               >
                 <div
                   className="absolute inset-0 bg-cover bg-center opacity-0 group-hover:opacity-100 transition-opacity duration-500"
@@ -152,10 +195,10 @@ export default function Home() {
                   </p>
                 </div>
               </Link>
-            );
-          })}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      )}
     </Layout>
   );
 }

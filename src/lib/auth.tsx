@@ -8,7 +8,12 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
-export type Role = 'student' | 'faculty' | 'technician' | 'service_provider' | 'admin';
+export type Role =
+  | 'student'
+  | 'faculty'
+  | 'technician'
+  | 'service_provider'
+  | 'admin';
 
 export interface User {
   id: number;
@@ -16,6 +21,7 @@ export interface User {
   name: string;
   role: Role;
   department: string;
+  sponsor_id: number | null;
   initials: string;
 }
 
@@ -42,7 +48,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Rehydrate from localStorage on mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -95,7 +100,7 @@ export function useAuth() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Directory — for login demo list and sponsor dropdowns
+// Directory — for the login demo list and sponsor dropdowns
 // ═══════════════════════════════════════════════════════════════
 
 export async function getUsers(role?: Role): Promise<DirectoryUser[]> {

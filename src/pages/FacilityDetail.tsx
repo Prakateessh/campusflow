@@ -36,7 +36,6 @@ export default function FacilityDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Form state
   const [purpose, setPurpose] = useState('');
   const [description, setDescription] = useState('');
   const [sponsorId, setSponsorId] = useState<number | ''>('');
@@ -50,7 +49,6 @@ export default function FacilityDetail() {
   const [draftItemUnit, setDraftItemUnit] = useState('piece');
   const [confirmed, setConfirmed] = useState(false);
 
-  // Fetch facility
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -75,7 +73,6 @@ export default function FacilityDetail() {
     };
   }, [id]);
 
-  // Load faculty list when form opens
   useEffect(() => {
     if (!showForm || faculty.length > 0) return;
     getUsers('faculty')
@@ -118,7 +115,6 @@ export default function FacilityDetail() {
     if (!user || !facility) return;
     setFormError(null);
 
-    // Validation — option D, everything enforced
     if (!purpose.trim() || purpose.trim().length < 15) {
       setFormError('Purpose is required and must be at least 15 characters — explain what you need this for.');
       return;
@@ -204,6 +200,7 @@ export default function FacilityDetail() {
   }
 
   const categoryLabel = CATEGORY_LABELS[facility.category] ?? facility.category;
+  const hasSponsor = user?.sponsor_id != null;
 
   return (
     <Layout>
@@ -268,15 +265,34 @@ export default function FacilityDetail() {
 
           <aside className="col-span-12 lg:col-span-4 space-y-8">
             <div className="space-y-3">
-              <button
-                onClick={() => setShowForm(true)}
-                className="btn btn-accent w-full text-sm"
-              >
-                Request access
-              </button>
-              <p className="text-[12px] text-[var(--color-ink-4)] text-center leading-relaxed">
-                Requires a faculty sponsor, a stated purpose, and a list of items.
-              </p>
+              {hasSponsor ? (
+                <>
+                  <button
+                    onClick={() => setShowForm(true)}
+                    className="btn btn-accent w-full text-sm"
+                  >
+                    Request access
+                  </button>
+                  <p className="text-[12px] text-[var(--color-ink-4)] text-center leading-relaxed">
+                    Requires a faculty sponsor, a stated purpose, and a list of items.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <button
+                    disabled
+                    className="btn btn-accent w-full text-sm opacity-30 cursor-not-allowed"
+                  >
+                    Request access
+                  </button>
+                  <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3">
+                    <p className="text-[12px] text-[var(--color-accent)] leading-relaxed">
+                      No faculty sponsor assigned to your account. Contact your
+                      department office to get one before submitting requests.
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
             {facility.contact && (
@@ -321,7 +337,6 @@ export default function FacilityDetail() {
         </div>
       </section>
 
-      {/* ════════ REQUEST FORM MODAL ════════ */}
       {showForm && (
         <div
           className="fixed inset-0 z-50 bg-[var(--color-ink)]/60 flex items-center justify-center p-4 overflow-y-auto"
@@ -352,7 +367,6 @@ export default function FacilityDetail() {
 
             <form onSubmit={submitRequest} className="px-6 py-6 space-y-6">
 
-              {/* Purpose — required, min length */}
               <div>
                 <label className="label block mb-2">
                   Purpose <span className="text-[var(--color-accent)]">*</span>
@@ -369,7 +383,6 @@ export default function FacilityDetail() {
                 </p>
               </div>
 
-              {/* Description — optional */}
               <div>
                 <label className="label block mb-2">Additional notes (optional)</label>
                 <textarea
@@ -381,7 +394,6 @@ export default function FacilityDetail() {
                 />
               </div>
 
-              {/* Sponsor — required */}
               <div>
                 <label className="label block mb-2">
                   Faculty sponsor <span className="text-[var(--color-accent)]">*</span>
@@ -400,7 +412,6 @@ export default function FacilityDetail() {
                 </select>
               </div>
 
-              {/* Slot time */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label block mb-2">Start (optional)</label>
@@ -422,7 +433,6 @@ export default function FacilityDetail() {
                 </div>
               </div>
 
-              {/* Items — required, at least one */}
               <div>
                 <label className="label block mb-2">
                   Items / components needed <span className="text-[var(--color-accent)]">*</span>
@@ -431,10 +441,7 @@ export default function FacilityDetail() {
                 {items.length > 0 && (
                   <ul className="border border-[var(--color-rule)] divide-y divide-[var(--color-rule)] mb-3">
                     {items.map((item, i) => (
-                      <li
-                        key={i}
-                        className="flex items-center gap-4 px-4 py-3"
-                      >
+                      <li key={i} className="flex items-center gap-4 px-4 py-3">
                         <span className="label num shrink-0 w-8">
                           {String(item.quantity).padStart(2, '0')}×
                         </span>
@@ -489,7 +496,6 @@ export default function FacilityDetail() {
                 </div>
               </div>
 
-              {/* Loan toggle */}
               <div className="border border-[var(--color-rule)] p-4">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input
@@ -524,7 +530,6 @@ export default function FacilityDetail() {
                 )}
               </div>
 
-              {/* Confirm checkbox */}
               <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input

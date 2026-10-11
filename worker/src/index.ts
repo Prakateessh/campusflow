@@ -108,6 +108,29 @@ export default {
       }
 
       // ═══════════════════════════════════════════════════════════
+      // GET /api/inventory?facility_id=X
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/inventory' && request.method === 'GET') {
+        const facilityId = url.searchParams.get('facility_id');
+        if (!facilityId) {
+          return json({ error: 'facility_id is required' }, cors, 400);
+        }
+
+        const result = await env.campusflow_db
+          .prepare(`
+            SELECT id, sku, name, kind, quantity_total, quantity_available,
+                   unit, requires_return, return_days, notes
+            FROM inventory
+            WHERE facility_id = ? AND quantity_available > 0
+            ORDER BY name
+          `)
+          .bind(Number(facilityId))
+          .all();
+
+        return json({ items: result.results }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
       // GET /api/requests?user_id=X&status=Y
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/requests' && request.method === 'GET') {
@@ -181,7 +204,6 @@ export default {
           );
         }
 
-        // Lab requests require purpose + sponsor + items
         if (body.kind === 'lab') {
           if (!body.purpose || body.purpose.trim().length < 15) {
             return json(
@@ -206,7 +228,6 @@ export default {
           }
         }
 
-        // Return date required for borrowed equipment
         const hasBorrowableItem = (body.items ?? []).some(
           (i) => i.item_type === 'inventory' || i.item_type === 'sports_equipment',
         );
@@ -268,6 +289,21 @@ export default {
               item.notes ?? null,
             )
             .run();
+
+          // Decrement stock for inventory-backed items
+          if (
+            item.inventory_id &&
+            (item.item_type === 'inventory' || item.item_type === 'sports_equipment')
+          ) {
+            await env.campusflow_db
+              .prepare(`
+                UPDATE inventory
+                SET quantity_available = quantity_available - ?
+                WHERE id = ? AND quantity_available >= ?
+              `)
+              .bind(item.quantity, item.inventory_id, item.quantity)
+              .run();
+          }
         }
 
         return json(
@@ -418,6 +454,74 @@ export default {
       }
 
       // ═══════════════════════════════════════════════════════════
+      // POST /api/requests/:id/cancel
+      // ═══════════════════════════════════════════════════════════
+      const cancelMatch = path.match(/^\/api\/requests\/(\d+)\/cancel$/);
+      if (cancelMatch && request.method === 'POST') {
+        const reqId = Number(cancelMatch[1]);
+        const body = await request.json<{ user_id: number; reason?: string }>();
+
+        if (!body.user_id) {
+          return json({ error: 'user_id is required' }, cors, 400);
+        }
+
+        const req = await env.campusflow_db
+          .prepare('SELECT id, requester_id, status FROM requests WHERE id = ?')
+          .bind(reqId)
+          .first<{ id: number; requester_id: number; status: string }>();
+
+        if (!req) {
+          return json({ error: 'Request not found' }, cors, 404);
+        }
+        if (req.requester_id !== body.user_id) {
+          return json({ error: 'Not your request' }, cors, 403);
+        }
+        if (['completed', 'cancelled', 'rejected'].includes(req.status)) {
+          return json(
+            { error: `Cannot cancel a ${req.status} request` },
+            cors,
+            400,
+          );
+        }
+
+        // Restore inventory stock for any borrowed items
+        const borrowItems = await env.campusflow_db
+          .prepare(`
+            SELECT inventory_id, quantity
+            FROM request_items
+            WHERE request_id = ?
+              AND inventory_id IS NOT NULL
+              AND item_type IN ('inventory', 'sports_equipment')
+          `)
+          .bind(reqId)
+          .all<{ inventory_id: number; quantity: number }>();
+
+        for (const item of borrowItems.results ?? []) {
+          await env.campusflow_db
+            .prepare(`
+              UPDATE inventory
+              SET quantity_available = quantity_available + ?
+              WHERE id = ?
+            `)
+            .bind(item.quantity, item.inventory_id)
+            .run();
+        }
+
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+        await env.campusflow_db
+          .prepare(`
+            UPDATE requests
+            SET status = 'cancelled', cancelled_at = ?, cancellation_reason = ?
+            WHERE id = ?
+          `)
+          .bind(now, body.reason ?? null, reqId)
+          .run();
+
+        return json({ success: true, status: 'cancelled' }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
       // GET /api/admin/queue?approver_id=X
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/admin/queue' && request.method === 'GET') {
@@ -511,7 +615,7 @@ export default {
 
         const user = await env.campusflow_db
           .prepare(`
-            SELECT id, email, name, role, department, password
+            SELECT id, email, name, role, department, sponsor_id, password
             FROM users
             WHERE LOWER(email) = ?
           `)
@@ -538,6 +642,7 @@ export default {
               name: user.name,
               role: user.role,
               department: user.department,
+              sponsor_id: user.sponsor_id,
               initials,
             },
           },
@@ -573,45 +678,35 @@ export default {
           user_id: number;
           facility_id: number;
           pickup_at: string;
-          items: Array<{ menu_item_id: number; quantity: number; notes?: string }>;
+          items: Array<{
+            menu_item_id: number;
+            name: string;
+            price_cents: number;
+            prep_time_minutes: number;
+            quantity: number;
+            notes?: string;
+          }>;
         }>();
 
         if (!body.user_id || !body.facility_id || !body.pickup_at || !body.items?.length) {
           return json({ error: 'Missing required fields' }, cors, 400);
         }
 
-        const menuIds = body.items.map((i) => i.menu_item_id);
-        const placeholders = menuIds.map(() => '?').join(',');
-        const menuItems = await env.campusflow_db
-          .prepare(`
-            SELECT id, name, price_cents, prep_time_minutes
-            FROM canteen_menu
-            WHERE id IN (${placeholders})
-          `)
-          .bind(...menuIds)
-          .all<any>();
-
-        const menuMap = new Map(
-          (menuItems.results ?? []).map((m: any) => [m.id, m]),
+        const subtotal = body.items.reduce(
+          (sum, line) => sum + (line.price_cents ?? 0) * line.quantity,
+          0,
         );
-
-        const subtotal = body.items.reduce((sum, line) => {
-          const m = menuMap.get(line.menu_item_id) as any;
-          return sum + (m ? m.price_cents * line.quantity : 0);
-        }, 0);
         const gst = Math.round(subtotal * 0.05);
         const total = subtotal + gst;
 
         const prepMax = Math.max(
-          ...body.items.map(
-            (line) => (menuMap.get(line.menu_item_id) as any)?.prep_time_minutes ?? 10,
-          ),
+          ...body.items.map((line) => line.prep_time_minutes ?? 10),
           10,
         );
 
         const title =
           body.items.length === 1
-            ? `Order — ${body.items[0].quantity}× ${(menuMap.get(body.items[0].menu_item_id) as any)?.name}`
+            ? `Order — ${body.items[0].quantity}× ${body.items[0].name}`
             : `Order — ${body.items.length} items`;
 
         const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -644,9 +739,13 @@ export default {
             .prepare(`
               INSERT INTO request_items
                 (request_id, item_type, menu_item_id, quantity, unit, notes)
-              VALUES (?, 'menu_item', ?, ?, 'plate', ?)
+              VALUES (?, 'menu_item', NULL, ?, 'plate', ?)
             `)
-            .bind(requestId, line.menu_item_id, line.quantity, line.notes ?? null)
+            .bind(
+              requestId,
+              line.quantity,
+              `${line.name} · ₹${((line.price_cents ?? 0) / 100).toFixed(0)}`,
+            )
             .run();
         }
 
@@ -750,8 +849,7 @@ export default {
       }
 
       // ═══════════════════════════════════════════════════════════
-      // GET /api/library/loans?user_id=X
-      //   Returns the signed-in user's active loans with book details
+      // LIBRARY — GET /api/library/loans?user_id=X
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/library/loans' && request.method === 'GET') {
         const userId = url.searchParams.get('user_id');
@@ -784,7 +882,6 @@ export default {
 
       // ═══════════════════════════════════════════════════════════
       // POST /api/library/renew
-      //   Extends the loan due date by 14 days
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/library/renew' && request.method === 'POST') {
         const body = await request.json<{ user_id: number; loan_id: number }>();
@@ -860,8 +957,23 @@ export default {
       }
 
       // ═══════════════════════════════════════════════════════════
+      // STORE — GET /api/store/items
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/store/items' && request.method === 'GET') {
+        const result = await env.campusflow_db
+          .prepare(`
+            SELECT id, name, description, category, price_cents, unit, available
+            FROM store_items
+            WHERE available > 0
+            ORDER BY category, display_order, name
+          `)
+          .all();
+
+        return json({ items: result.results }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
       // AI ASSISTANT — POST /api/ai/chat
-      //   Grounds every response in the actual facility data.
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/ai/chat' && request.method === 'POST') {
         const body = await request.json<{ message: string }>();
@@ -874,7 +986,6 @@ export default {
           return json({ error: 'Message too long' }, cors, 400);
         }
 
-        // Pull full facility data including equipment
         const facilities = await env.campusflow_db
           .prepare(`
             SELECT code, name, category, description, equipment
@@ -884,7 +995,6 @@ export default {
           `)
           .all();
 
-        // Build a rich, well-structured facility list for the prompt
         const facilityList = (facilities.results ?? [])
           .map((f: any) => {
             const eq = safeParse(f.equipment) as string[];
@@ -908,7 +1018,7 @@ SERVICES AVAILABLE:
 - Lab access — requires faculty sponsor, a stated purpose, and a list of items
 - Canteen — pre-order meals, pickup slot
 - Library — search and renew books
-- Sports — book pool sessions and borrow gear
+- Sports — borrow sports equipment
 - Stores — reserve stationery, essentials
 
 STRICT RULES:
@@ -928,7 +1038,7 @@ User: Where can I do nanomaterial synthesis?
 Assistant: Nanomaterials Laboratory (CH-04) supports nanomaterial synthesis, thin-film deposition, and electrical property measurements. You'll need a faculty sponsor and a stated purpose. Would you like me to point you to the request form?
 
 User: Can I book a tennis court?
-Assistant: I don't have a tennis court in the current list. The Sports page has Swimming Pool (G-05) and Sports Materials (G-07) for gear. Check there, or let me know what you need and I'll look again.
+Assistant: I don't have a tennis court in the current list. The Sports page has sports equipment for borrowing. Check there, or let me know what you need and I'll look again.
 
 User: I need something for my IoT project.
 Assistant: Intelligent Electronics System Laboratory (C-02) has ESP32 boards, LoRa gateways, and NVIDIA Jetson Nano kits — a strong fit for IoT work. Would you like me to check what else is available?`;
@@ -951,67 +1061,6 @@ Assistant: Intelligent Electronics System Laboratory (C-02) has ESP32 boards, Lo
             : (aiResponse as any)?.response ?? 'I could not generate a response.';
 
         return json({ reply }, cors);
-      }
-
-            // ═══════════════════════════════════════════════════════════
-      // POST /api/requests/:id/cancel
-      // ═══════════════════════════════════════════════════════════
-      const cancelMatch = path.match(/^\/api\/requests\/(\d+)\/cancel$/);
-      if (cancelMatch && request.method === 'POST') {
-        const reqId = Number(cancelMatch[1]);
-        const body = await request.json<{ user_id: number; reason?: string }>();
-
-        if (!body.user_id) {
-          return json({ error: 'user_id is required' }, cors, 400);
-        }
-
-        const req = await env.campusflow_db
-          .prepare('SELECT id, requester_id, status FROM requests WHERE id = ?')
-          .bind(reqId)
-          .first<{ id: number; requester_id: number; status: string }>();
-
-        if (!req) {
-          return json({ error: 'Request not found' }, cors, 404);
-        }
-        if (req.requester_id !== body.user_id) {
-          return json({ error: 'Not your request' }, cors, 403);
-        }
-        if (['completed', 'cancelled', 'rejected'].includes(req.status)) {
-          return json(
-            { error: `Cannot cancel a ${req.status} request` },
-            cors,
-            400,
-          );
-        }
-
-        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-
-        await env.campusflow_db
-          .prepare(`
-            UPDATE requests
-            SET status = 'cancelled', cancelled_at = ?, cancellation_reason = ?
-            WHERE id = ?
-          `)
-          .bind(now, body.reason ?? null, reqId)
-          .run();
-
-        return json({ success: true, status: 'cancelled' }, cors);
-      }
-
-            // ═══════════════════════════════════════════════════════════
-      // GET /api/store/items
-      // ═══════════════════════════════════════════════════════════
-      if (path === '/api/store/items' && request.method === 'GET') {
-        const result = await env.campusflow_db
-          .prepare(`
-            SELECT id, name, description, category, price_cents, unit, available
-            FROM store_items
-            WHERE available > 0
-            ORDER BY category, display_order, name
-          `)
-          .all();
-
-        return json({ items: result.results }, cors);
       }
 
       // ═══════════════════════════════════════════════════════════
