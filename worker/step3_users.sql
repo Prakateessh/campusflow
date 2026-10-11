@@ -1,0 +1,18 @@
+INSERT INTO users (email, name, role, department, password) VALUES
+  ('n_mohankumar@cb.amrita.edu',        'Mohankumar N.',             'faculty', 'ECE',        'demo'),
+  ('s_krithiga@cb.amrita.edu',          'Dr. Kirthiga S.',           'faculty', 'ECE',        'demo'),
+  ('n_madhumohan@cb.amrita.edu',        'Dr. Madhu Mohan N.',        'faculty', 'ECE',        'demo'),
+  ('m_saimurugan@cb.amrita.edu',        'Dr. Saimurugan M.',         'faculty', 'MECH',       'demo'),
+  ('krishna@amrita.edu',                'Dr. Krishnashree Achuthan', 'faculty', 'CSE',        'demo'),
+  ('a_sumesh@cb.amrita.edu',            'Dr. A. Sumesh',             'faculty', 'MECH',       'demo'),
+  ('r_senthilkumar@cb.amrita.edu',      'Mr. R. Senthilkumar',       'faculty', 'MECH',       'demo'),
+  ('ar_vijayanarayanan@cb.amrita.edu',  'Dr. Vijayanarayanan A. R.', 'faculty', 'Civil',      'demo'),
+  ('k_srinivasan@cb.amrita.edu',        'Mr. K. Srinivasan',         'faculty', 'Civil',      'demo'),
+  ('admin@cb.amrita.edu',   'Administration', 'admin',            'Administration', 'demo'),
+  ('canteen@cb.amrita.edu', 'Canteen Staff',  'service_provider', 'Canteen',        'demo'),
+  ('library@cb.amrita.edu', 'Library Staff',  'service_provider', 'Library',        'demo'),
+  ('cb.en.u4cse21001@cb.students.amrita.edu',  'Student 1-CSE',  'student', 'CSE',  'demo'),
+  ('cb.en.u4cse21002@cb.students.amrita.edu',  'Student 2-CSE',  'student', 'CSE',  'demo'),
+  ('cb.en.u4ece21001@cb.students.amrita.edu',  'Student 3-ECE',  'student', 'ECE',  'demo'),
+  ('cb.en.u4ece21002@cb.students.amrita.edu',  'Student 4-ECE',  'student', 'ECE',  'demo'),
+  ('cb.en.u4mech21001@cb.students.amrita.edu', 'Student 5-MECH', 'student', 'MECH', 'demo');
