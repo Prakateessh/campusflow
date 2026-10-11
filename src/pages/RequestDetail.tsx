@@ -30,8 +30,8 @@ export default function RequestDetail() {
 
   const [decisionNote, setDecisionNote] = useState('');
   const [deciding, setDeciding] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
-  // Fetch request
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -65,6 +65,32 @@ export default function RequestDetail() {
     if (!id) return;
     const res = await getRequestDetail(Number(id));
     if (res) setData(res);
+  };
+
+  const handleCancel = async () => {
+    if (!user || !data) return;
+    if (!window.confirm('Cancel this request? This cannot be undone.')) return;
+
+    setCancelling(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/requests/${data.request.id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user.id }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error ?? 'Cancel failed');
+      }
+
+      flash('Request cancelled');
+      await reload();
+    } catch (err: any) {
+      flash(err.message ?? 'Cancel failed');
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const submitDecision = async (decision: 'approved' | 'rejected' | 'needs_info') => {
@@ -123,11 +149,12 @@ export default function RequestDetail() {
 
   const { request: req, items, approvals } = data;
   const requestId = `R-${String(req.id).padStart(4, '0')}`;
+  const displayStatus = req.status;
 
   const statusStyle =
-    req.status === 'approved' || req.status === 'scheduled'
+    displayStatus === 'approved' || displayStatus === 'scheduled'
       ? 'label label-accent'
-      : req.status === 'submitted' || req.status === 'pending_approval'
+      : displayStatus === 'submitted' || displayStatus === 'pending_approval'
       ? 'label label-ink'
       : 'label';
 
@@ -143,12 +170,16 @@ export default function RequestDetail() {
     });
   };
 
-  // Can the current user act on this request?
   const canAct =
     user &&
     ((user.role === 'faculty' && req.status === 'submitted' && user.id === req.sponsor_id) ||
       (user.role === 'technician' && req.status === 'pending_approval') ||
       (user.role === 'admin' && !['completed', 'rejected', 'cancelled'].includes(req.status)));
+
+  const canCancel =
+    user &&
+    user.id === req.requester_id &&
+    !['completed', 'cancelled', 'rejected'].includes(req.status);
 
   // Timeline
   const timeline: Array<{
@@ -181,32 +212,39 @@ export default function RequestDetail() {
     });
   }
 
-  if (req.status === 'submitted') {
+  if (displayStatus === 'submitted') {
     timeline.push({
       label: 'Awaiting sponsor',
       actor: 'Faculty review',
       at: null,
       state: 'active',
     });
-  } else if (req.status === 'pending_approval') {
+  } else if (displayStatus === 'pending_approval') {
     timeline.push({
       label: 'Awaiting technician',
       actor: 'Lab review',
       at: null,
       state: 'active',
     });
-  } else if (req.status === 'approved' || req.status === 'scheduled') {
+  } else if (displayStatus === 'approved' || displayStatus === 'scheduled') {
     timeline.push({
       label: 'Approved',
       actor: 'System',
       at: formatDate(req.approved_at),
       state: 'active',
     });
-  } else if (req.status === 'completed') {
+  } else if (displayStatus === 'completed') {
     timeline.push({
       label: 'Completed',
       actor: 'System',
       at: formatDate(req.completed_at),
+      state: 'done',
+    });
+  } else if (displayStatus === 'cancelled') {
+    timeline.push({
+      label: 'Cancelled',
+      actor: req.requester_name,
+      at: null,
       state: 'done',
     });
   }
@@ -223,12 +261,14 @@ export default function RequestDetail() {
         <div className="flex items-center gap-3 mb-6 flex-wrap">
           <span className="label label-accent num">{requestId}</span>
           <span className="w-6 h-px bg-[var(--color-rule)]" />
-          <span className={statusStyle}>{STATUS_LABEL[req.status] ?? req.status}</span>
+          <span className={statusStyle}>{STATUS_LABEL[displayStatus] ?? displayStatus}</span>
         </div>
         <h1 className="text-3xl md:text-4xl leading-tight max-w-3xl">{req.title}</h1>
-        <p className="mt-4 text-[15px] text-[var(--color-ink-3)]">
-          {req.facility_name} · {req.facility_code}
-        </p>
+        {req.facility_name && (
+          <p className="mt-4 text-[15px] text-[var(--color-ink-3)]">
+            {req.facility_name} · {req.facility_code}
+          </p>
+        )}
       </section>
 
       <section className="pb-24">
@@ -337,7 +377,20 @@ export default function RequestDetail() {
           </div>
 
           <aside className="col-span-12 lg:col-span-4 space-y-8">
-            {/* Decision panel — only for approvers */}
+            {/* Cancel button — for the requester */}
+            {canCancel && (
+              <div>
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="btn btn-outline w-full text-sm disabled:opacity-50"
+                >
+                  {cancelling ? 'Cancelling…' : 'Cancel request'}
+                </button>
+              </div>
+            )}
+
+            {/* Decision panel — for approvers */}
             {canAct && (
               <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
                 <div className="px-6 py-4 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
@@ -401,10 +454,12 @@ export default function RequestDetail() {
                   <dt className="text-[var(--color-ink-3)] shrink-0">Requester</dt>
                   <dd className="text-right">{req.requester_name}</dd>
                 </div>
-                <div className="flex items-start justify-between gap-4">
-                  <dt className="text-[var(--color-ink-3)] shrink-0">Lab</dt>
-                  <dd className="text-right">{req.facility_code}</dd>
-                </div>
+                {req.facility_code && (
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-[var(--color-ink-3)] shrink-0">Lab</dt>
+                    <dd className="text-right">{req.facility_code}</dd>
+                  </div>
+                )}
               </dl>
             </div>
 
@@ -418,15 +473,17 @@ export default function RequestDetail() {
               </div>
             )}
 
-            <div className="border-t border-[var(--color-rule)] pt-6">
-              <span className="label">Related</span>
-              <Link
-                to={`/facilities/${req.facility_id}`}
-                className="mt-4 inline-flex items-center gap-2 text-[15px] hover:text-[var(--color-accent)] transition-colors"
-              >
-                View lab →
-              </Link>
-            </div>
+            {req.facility_id && (
+              <div className="border-t border-[var(--color-rule)] pt-6">
+                <span className="label">Related</span>
+                <Link
+                  to={`/facilities/${req.facility_id}`}
+                  className="mt-4 inline-flex items-center gap-2 text-[15px] hover:text-[var(--color-accent)] transition-colors"
+                >
+                  View lab →
+                </Link>
+              </div>
+            )}
           </aside>
         </div>
       </section>

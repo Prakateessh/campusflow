@@ -1,91 +1,79 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
+import { useAuth } from '../lib/auth';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
-interface Book {
-  id: number;
+interface Loan {
+  loan_id: number;
+  book_id: number;
   isbn: string;
   title: string;
   author: string;
-  total_copies: number;
-  available_copies: number;
   shelf_code: string;
+  borrowed_at: string;
+  due_date: string;
+  renewals: number;
 }
 
-type Filter = 'all' | 'available' | 'out';
-
 export default function Library() {
-  const [books, setBooks] = useState<Book[]>([]);
+  const { user } = useAuth();
+
+  const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
   const [renewing, setRenewing] = useState<number | null>(null);
-  const [renewed, setRenewed] = useState<Record<number, { due_date: string; days: number }>>({});
 
-  // Debounce search + fetch
-  useEffect(() => {
-    let cancelled = false;
+  const reload = async () => {
+    if (!user) return;
     setLoading(true);
     setError(null);
 
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams();
-      if (query.trim()) params.set('q', query.trim());
-      if (filter === 'available') params.set('filter', 'available');
-      if (filter === 'out') params.set('filter', 'out');
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/library/loans?user_id=${user.id}`,
+      );
 
-      fetch(`${API_BASE}/api/library/books?${params.toString()}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (!cancelled) setBooks(data.books ?? []);
-        })
-        .catch((err) => {
-          if (!cancelled) setError(err.message);
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-    }, 250);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Failed to load loans');
+      }
 
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [query, filter]);
+      const data = await res.json();
+      setLoans(data.loans ?? []);
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to load loans');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const counts = useMemo(
-    () => ({
-      all: books.length,
-      available: books.filter((b) => b.available_copies > 0).length,
-      out: books.filter((b) => b.available_copies === 0).length,
-    }),
-    [books],
-  );
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
-  const handleRenew = async (book: Book) => {
-    if (renewing) return;
-    setRenewing(book.id);
+  const handleRenew = async (loan: Loan) => {
+    if (!user || renewing) return;
+    setRenewing(loan.loan_id);
     setError(null);
 
     try {
       const res = await fetch(`${API_BASE}/api/library/renew`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: 8, book_id: book.id }),
+        body: JSON.stringify({
+          user_id: user.id,
+          loan_id: loan.loan_id,
+        }),
       });
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.message ?? `Renewal failed: ${res.status}`);
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? 'Renewal failed');
       }
 
-      const data = await res.json();
-      setRenewed((r) => ({
-        ...r,
-        [book.id]: { due_date: data.due_date, days: data.days },
-      }));
+      await reload();
     } catch (err: any) {
       setError(err.message ?? 'Failed to renew');
     } finally {
@@ -93,58 +81,50 @@ export default function Library() {
     }
   };
 
-  const formatDueDate = (iso: string) => {
-    const d = new Date(iso.replace(' ', 'T'));
-    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  // Days until due. Negative = overdue.
+  const daysLeft = (dueDate: string) => {
+    const due = new Date(dueDate.replace(' ', 'T'));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    due.setHours(0, 0, 0, 0);
+    return Math.round((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
   };
 
-  const filters: Array<{ id: Filter; label: string; count: number }> = [
-    { id: 'all', label: 'All', count: counts.all },
-    { id: 'available', label: 'Available', count: counts.available },
-    { id: 'out', label: 'Out', count: counts.out },
-  ];
+  const formatDate = (iso: string) => {
+    const d = new Date(iso.replace(' ', 'T'));
+    return d.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  };
+
+  const overdueCount = loans.filter((l) => daysLeft(l.due_date) < 0).length;
 
   return (
     <Layout>
+      {/* ═══════ HEADING ═══════ */}
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
+            <span className="section-rule" />
             <h1 className="text-2xl md:text-3xl">Library</h1>
           </div>
           <span className="label num">
-            {loading ? '···' : `${String(books.length).padStart(2, '0')} shown`}
+            {loading ? '···' : `${String(loans.length).padStart(2, '0')} active`}
           </span>
         </div>
+
+        {!loading && loans.length > 0 && (
+          <p className="mt-3 text-[13px] text-[var(--color-ink-3)]">
+            {overdueCount > 0
+              ? `${overdueCount} overdue · renew to extend by 14 days`
+              : 'Your active loans. Renew to extend by 14 days.'}
+          </p>
+        )}
       </section>
 
-      <section className="pb-8">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-          <div className="flex flex-wrap gap-2">
-            {filters.map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setFilter(f.id)}
-                className={`tag cursor-pointer transition-colors ${
-                  filter === f.id ? 'tag-accent' : 'hover:border-[var(--color-ink-4)]'
-                }`}
-              >
-                {f.label}
-                <span className="ml-2 opacity-60 num">{String(f.count).padStart(2, '0')}</span>
-              </button>
-            ))}
-          </div>
-
-          <input
-            type="text"
-            placeholder="Search by title, author, or ISBN…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="input md:max-w-sm"
-          />
-        </div>
-      </section>
-
+      {/* ═══════ BODY ═══════ */}
       <section className="pb-24">
         {error && (
           <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
@@ -152,78 +132,100 @@ export default function Library() {
           </div>
         )}
 
-        <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
-          <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
-            <span className="col-span-5 label">Title</span>
-            <span className="col-span-3 label">Author</span>
-            <span className="col-span-2 label">Shelf</span>
-            <span className="col-span-2 label text-right">Status</span>
+        {loading ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">Loading…</span>
           </div>
+        ) : loans.length === 0 ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">No active loans</span>
+            <p className="mt-3 text-[13px] text-[var(--color-ink-3)]">
+              Books you borrow from the library will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
+            {/* Desktop header row */}
+            <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
+              <span className="col-span-5 label">Book</span>
+              <span className="col-span-3 label">Shelf</span>
+              <span className="col-span-2 label">Due</span>
+              <span className="col-span-2 label text-right">Action</span>
+            </div>
 
-          <div className="divide-y divide-[var(--color-rule)]">
-            {loading ? (
-              <div className="py-24 text-center">
-                <span className="label">Loading…</span>
-              </div>
-            ) : books.length === 0 ? (
-              <div className="py-24 text-center">
-                <span className="label">No books match your search</span>
-              </div>
-            ) : (
-              books.map((b) => {
-                const renewal = renewed[b.id];
-                const isRenewing = renewing === b.id;
+            <div className="divide-y divide-[var(--color-rule)]">
+              {loans.map((loan) => {
+                const days = daysLeft(loan.due_date);
+                const overdue = days < 0;
+                const dueSoon = days >= 0 && days <= 3;
+                const isRenewing = renewing === loan.loan_id;
 
                 return (
                   <div
-                    key={b.id}
+                    key={loan.loan_id}
                     className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 px-6 py-5 items-center transition-colors hover:bg-[var(--color-surface-low)]"
                   >
+                    {/* Title + author */}
                     <div className="md:col-span-5">
-                      <h3 className="text-[16px] leading-snug">{b.title}</h3>
-                      <p className="mt-1 text-[13px] text-[var(--color-ink-4)] num">{b.isbn}</p>
+                      <h3 className="text-[16px] leading-snug">{loan.title}</h3>
+                      <p className="mt-1 text-[13px] text-[var(--color-ink-3)]">
+                        {loan.author}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-[var(--color-ink-4)] num">
+                        {loan.isbn}
+                      </p>
                     </div>
 
-                    <span className="md:col-span-3 text-[15px] text-[var(--color-ink-3)]">
-                      {b.author}
-                    </span>
+                    {/* Shelf code */}
+                    <div className="md:col-span-3">
+                      <span className="label md:hidden">Shelf</span>
+                      <p className="mt-1 md:mt-0 text-[14px] num text-[var(--color-ink-3)]">
+                        {loan.shelf_code}
+                      </p>
+                    </div>
 
-                    <span className="md:col-span-2 text-[14px] num text-[var(--color-ink-3)]">
-                      {b.shelf_code}
-                    </span>
+                    {/* Due date + urgency */}
+                    <div className="md:col-span-2">
+                      <span className="label md:hidden">Due</span>
+                      <p className="mt-1 md:mt-0 text-[14px] num">
+                        {formatDate(loan.due_date)}
+                      </p>
+                      <p
+                        className={`mt-0.5 text-[11px] ${
+                          overdue || dueSoon
+                            ? 'text-[var(--color-accent)]'
+                            : 'text-[var(--color-ink-4)]'
+                        }`}
+                      >
+                        {overdue
+                          ? `Overdue ${Math.abs(days)}d`
+                          : days === 0
+                          ? 'Due today'
+                          : `${days}d left`}
+                      </p>
+                    </div>
 
+                    {/* Renew button */}
                     <div className="md:col-span-2 md:text-right">
-                      {renewal ? (
-                        <span className="label label-accent">
-                          Renewed · due {formatDueDate(renewal.due_date)}
-                        </span>
-                      ) : (
-                        <div className="flex items-center md:justify-end gap-3">
-                          <span className="label">
-                            {b.available_copies > 0
-                              ? `${String(b.available_copies).padStart(2, '0')} available`
-                              : 'Out'}
-                          </span>
-                          <button
-                            onClick={() => handleRenew(b)}
-                            disabled={isRenewing}
-                            className="text-[12px] label hover:text-[var(--color-accent)] transition-colors disabled:opacity-30"
-                          >
-                            {isRenewing ? '···' : 'Renew'}
-                          </button>
-                        </div>
+                      <button
+                        onClick={() => handleRenew(loan)}
+                        disabled={isRenewing}
+                        className="btn btn-ghost text-sm disabled:opacity-30 disabled:cursor-not-allowed w-full md:w-auto"
+                      >
+                        {isRenewing ? '···' : 'Renew'}
+                      </button>
+                      {loan.renewals > 0 && (
+                        <p className="mt-2 text-[11px] text-[var(--color-ink-4)] md:text-right">
+                          Renewed {loan.renewals}×
+                        </p>
                       )}
                     </div>
                   </div>
                 );
-              })
-            )}
+              })}
+            </div>
           </div>
-        </div>
-
-        <div className="mt-6 text-[13px] text-[var(--color-ink-4)] leading-relaxed">
-          <span className="label">Note</span> · Renewals extend your loan by 14 days from today.
-        </div>
+        )}
       </section>
     </Layout>
   );

@@ -750,30 +750,86 @@ export default {
       }
 
       // ═══════════════════════════════════════════════════════════
-      // LIBRARY — POST /api/library/renew
+      // GET /api/library/loans?user_id=X
+      //   Returns the signed-in user's active loans with book details
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/library/loans' && request.method === 'GET') {
+        const userId = url.searchParams.get('user_id');
+        if (!userId) {
+          return json({ error: 'user_id is required' }, cors, 400);
+        }
+
+        const result = await env.campusflow_db
+          .prepare(`
+            SELECT
+              l.id AS loan_id,
+              l.borrowed_at,
+              l.due_date,
+              l.renewals,
+              b.id AS book_id,
+              b.isbn,
+              b.title,
+              b.author,
+              b.shelf_code
+            FROM library_loans l
+            JOIN library_books b ON b.id = l.book_id
+            WHERE l.user_id = ? AND l.returned_at IS NULL
+            ORDER BY l.due_date ASC
+          `)
+          .bind(Number(userId))
+          .all();
+
+        return json({ loans: result.results }, cors);
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // POST /api/library/renew
+      //   Extends the loan due date by 14 days
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/library/renew' && request.method === 'POST') {
-        const body = await request.json<{ user_id: number; book_id: number }>();
+        const body = await request.json<{ user_id: number; loan_id: number }>();
 
-        if (!body.user_id || !body.book_id) {
-          return json({ error: 'Missing required fields' }, cors, 400);
+        if (!body.user_id || !body.loan_id) {
+          return json({ error: 'user_id and loan_id are required' }, cors, 400);
         }
 
-        const book = await env.campusflow_db
-          .prepare('SELECT * FROM library_books WHERE id = ?')
-          .bind(body.book_id)
+        const loan = await env.campusflow_db
+          .prepare(`
+            SELECT l.id, l.user_id, l.book_id, l.due_date, l.returned_at,
+                   b.title
+            FROM library_loans l
+            JOIN library_books b ON b.id = l.book_id
+            WHERE l.id = ?
+          `)
+          .bind(body.loan_id)
           .first<any>();
 
-        if (!book) {
-          return json({ error: 'Book not found' }, cors, 404);
+        if (!loan) {
+          return json({ error: 'Loan not found' }, cors, 404);
+        }
+        if (loan.user_id !== body.user_id) {
+          return json({ error: 'Not your loan' }, cors, 403);
+        }
+        if (loan.returned_at) {
+          return json({ error: 'Already returned' }, cors, 400);
         }
 
-        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-        const due = new Date();
-        due.setDate(due.getDate() + 14);
-        const dueStr = due.toISOString().replace('T', ' ').slice(0, 19);
+        const newDue = new Date();
+        newDue.setDate(newDue.getDate() + 14);
+        const newDueStr = newDue.toISOString().replace('T', ' ').slice(0, 19);
 
-        const insertReq = await env.campusflow_db
+        await env.campusflow_db
+          .prepare(`
+            UPDATE library_loans
+            SET due_date = ?, renewals = renewals + 1
+            WHERE id = ?
+          `)
+          .bind(newDueStr, body.loan_id)
+          .run();
+
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+        await env.campusflow_db
           .prepare(`
             INSERT INTO requests
               (kind, requester_id, title, description, status,
@@ -784,34 +840,22 @@ export default {
           `)
           .bind(
             body.user_id,
-            `Renewal — ${book.title}`,
-            dueStr,
+            `Renewal — ${loan.title}`,
+            newDueStr,
             now,
             now,
             now,
           )
           .run();
 
-        const requestId = insertReq.meta.last_row_id;
-
-        await env.campusflow_db
-          .prepare(`
-            INSERT INTO request_items
-              (request_id, item_type, quantity, unit, notes)
-            VALUES (?, 'book', 1, 'book', ?)
-          `)
-          .bind(requestId, `${book.title} by ${book.author}`)
-          .run();
-
         return json(
           {
             success: true,
-            request_id: requestId,
-            due_date: dueStr,
+            loan_id: body.loan_id,
+            due_date: newDueStr,
             days: 14,
           },
           cors,
-          201,
         );
       }
 
@@ -907,6 +951,67 @@ Assistant: Intelligent Electronics System Laboratory (C-02) has ESP32 boards, Lo
             : (aiResponse as any)?.response ?? 'I could not generate a response.';
 
         return json({ reply }, cors);
+      }
+
+            // ═══════════════════════════════════════════════════════════
+      // POST /api/requests/:id/cancel
+      // ═══════════════════════════════════════════════════════════
+      const cancelMatch = path.match(/^\/api\/requests\/(\d+)\/cancel$/);
+      if (cancelMatch && request.method === 'POST') {
+        const reqId = Number(cancelMatch[1]);
+        const body = await request.json<{ user_id: number; reason?: string }>();
+
+        if (!body.user_id) {
+          return json({ error: 'user_id is required' }, cors, 400);
+        }
+
+        const req = await env.campusflow_db
+          .prepare('SELECT id, requester_id, status FROM requests WHERE id = ?')
+          .bind(reqId)
+          .first<{ id: number; requester_id: number; status: string }>();
+
+        if (!req) {
+          return json({ error: 'Request not found' }, cors, 404);
+        }
+        if (req.requester_id !== body.user_id) {
+          return json({ error: 'Not your request' }, cors, 403);
+        }
+        if (['completed', 'cancelled', 'rejected'].includes(req.status)) {
+          return json(
+            { error: `Cannot cancel a ${req.status} request` },
+            cors,
+            400,
+          );
+        }
+
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+        await env.campusflow_db
+          .prepare(`
+            UPDATE requests
+            SET status = 'cancelled', cancelled_at = ?, cancellation_reason = ?
+            WHERE id = ?
+          `)
+          .bind(now, body.reason ?? null, reqId)
+          .run();
+
+        return json({ success: true, status: 'cancelled' }, cors);
+      }
+
+            // ═══════════════════════════════════════════════════════════
+      // GET /api/store/items
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/store/items' && request.method === 'GET') {
+        const result = await env.campusflow_db
+          .prepare(`
+            SELECT id, name, description, category, price_cents, unit, available
+            FROM store_items
+            WHERE available > 0
+            ORDER BY category, display_order, name
+          `)
+          .all();
+
+        return json({ items: result.results }, cors);
       }
 
       // ═══════════════════════════════════════════════════════════

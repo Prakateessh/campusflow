@@ -1,19 +1,18 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { useAuth } from '../lib/auth';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
 interface MenuItem {
   id: number;
-  facility_id: number;
   name: string;
   description: string;
   price_cents: number;
   prep_time_minutes: number;
   category: string;
   available: number;
-  display_order: number;
 }
 
 interface CartLine {
@@ -21,38 +20,34 @@ interface CartLine {
   qty: number;
 }
 
-interface OrderConfirmation {
-  request_id: number;
-  queue_position: number;
-  total_cents: number;
-  prep_start: string;
-  pickup_at: string;
-}
-
-const CATEGORY_ORDER = ['All', 'breakfast', 'meal', 'snack', 'beverage'];
+const CATEGORY_ORDER = ['All', 'breakfast', 'lunch', 'dinner', 'snacks', 'bakery', 'beverages', 'icecream'];
 
 export default function Canteen() {
+  const { user } = useAuth();
+
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const [category, setCategory] = useState<string>('All');
   const [cart, setCart] = useState<Record<number, number>>({});
   const [pickupTime, setPickupTime] = useState('13:00');
   const [submitting, setSubmitting] = useState(false);
-  const [confirmation, setConfirmation] = useState<OrderConfirmation | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    request_id: number;
+    queue_position: number;
+    total_cents: number;
+    prep_start: string;
+    pickup_at: string;
+  } | null>(null);
 
-  // Fetch menu from API
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     fetch(`${API_BASE}/api/canteen/menu`)
       .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled) setMenu(data.menu ?? []);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message);
+      .then((d) => {
+        if (!cancelled) setMenu(d.menu ?? []);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -70,11 +65,11 @@ export default function Canteen() {
   const cartLines: CartLine[] = useMemo(
     () =>
       Object.entries(cart)
-        .map(([id, qty]) => ({
-          item: menu.find((m) => m.id === Number(id))!,
-          qty,
-        }))
-        .filter((l) => l.item && l.qty > 0),
+        .map(([id, qty]) => {
+          const item = menu.find((m) => m.id === Number(id));
+          return item ? { item, qty } : null;
+        })
+        .filter((l): l is CartLine => l !== null && l.qty > 0),
     [cart, menu],
   );
 
@@ -97,11 +92,10 @@ export default function Canteen() {
     });
 
   const submitOrder = async () => {
-    if (cartLines.length === 0 || submitting) return;
+    if (!user || cartLines.length === 0 || submitting) return;
+    setFormError(null);
     setSubmitting(true);
-    setError(null);
 
-    // Build pickup_at as "YYYY-MM-DD HH:MM:00"
     const today = new Date();
     const [h, m] = pickupTime.split(':');
     today.setHours(Number(h), Number(m), 0, 0);
@@ -112,11 +106,14 @@ export default function Canteen() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: 8,
+          user_id: user.id,
           facility_id: 40,
           pickup_at: pickupAt,
           items: cartLines.map((l) => ({
             menu_item_id: l.item.id,
+            name: l.item.name,
+            price_cents: l.item.price_cents,
+            prep_time_minutes: l.item.prep_time_minutes,
             quantity: l.qty,
           })),
         }),
@@ -124,14 +121,14 @@ export default function Canteen() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.message ?? `Order failed: ${res.status}`);
+        throw new Error(errData.error ?? `Order failed: ${res.status}`);
       }
 
       const data = await res.json();
       setConfirmation(data);
       setCart({});
     } catch (err: any) {
-      setError(err.message ?? 'Failed to place order');
+      setFormError(err.message ?? 'Failed to place order');
     } finally {
       setSubmitting(false);
     }
@@ -142,9 +139,7 @@ export default function Canteen() {
     setCart({});
   };
 
-  // ═══════════════════════════════════════════════════════════════
-  // CONFIRMATION STATE
-  // ═══════════════════════════════════════════════════════════════
+  // ════════ CONFIRMATION ════════
   if (confirmation) {
     const pickupTimeStr = confirmation.pickup_at.slice(11, 16);
     const prepStartStr = confirmation.prep_start.slice(11, 16);
@@ -154,7 +149,7 @@ export default function Canteen() {
       <Layout>
         <section className="pt-14 pb-12">
           <div className="flex items-center gap-3 mb-6">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
+            <span className="section-rule" />
             <span className="label label-accent">Order confirmed</span>
           </div>
           <h1 className="text-3xl md:text-4xl leading-tight">Your order is queued.</h1>
@@ -177,11 +172,15 @@ export default function Canteen() {
                 <div className="grid grid-cols-3 divide-x divide-[var(--color-rule)]">
                   <div className="px-6 py-6">
                     <span className="label">Pickup</span>
-                    <div className="mt-3 font-display text-3xl num leading-none">{pickupTimeStr}</div>
+                    <div className="mt-3 font-display text-3xl num leading-none">
+                      {pickupTimeStr}
+                    </div>
                   </div>
                   <div className="px-6 py-6">
                     <span className="label">Prep starts</span>
-                    <div className="mt-3 font-display text-3xl num leading-none">{prepStartStr}</div>
+                    <div className="mt-3 font-display text-3xl num leading-none">
+                      {prepStartStr}
+                    </div>
                   </div>
                   <div className="px-6 py-6">
                     <span className="label">Total</span>
@@ -201,7 +200,10 @@ export default function Canteen() {
                 <button onClick={resetOrder} className="btn btn-outline text-sm">
                   Order again
                 </button>
-                <Link to={`/requests/${confirmation.request_id}`} className="btn-link text-sm">
+                <Link
+                  to={`/requests/${confirmation.request_id}`}
+                  className="btn-link text-sm"
+                >
                   View in requests →
                 </Link>
               </div>
@@ -245,15 +247,13 @@ export default function Canteen() {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // MENU STATE
-  // ═══════════════════════════════════════════════════════════════
+  // ════════ MENU ════════
   return (
     <Layout>
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
-            <span className="w-8 h-px bg-[var(--color-accent)]" />
+            <span className="section-rule" />
             <h1 className="text-2xl md:text-3xl">Canteen</h1>
           </div>
           <span className="label">
@@ -279,9 +279,9 @@ export default function Canteen() {
       </section>
 
       <section className="pb-24">
-        {error && (
+        {formError && (
           <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
-            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+            <span className="text-[13px] text-[var(--color-accent)]">{formError}</span>
           </div>
         )}
 
@@ -290,6 +290,12 @@ export default function Canteen() {
             {loading ? (
               <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
                 <span className="label">Loading menu…</span>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+                <span className="label">
+                  {menu.length === 0 ? 'Menu not published yet' : 'No items in this category'}
+                </span>
               </div>
             ) : (
               <div className="border border-[var(--color-rule)] bg-[var(--color-card)] divide-y divide-[var(--color-rule)]">
@@ -328,15 +334,15 @@ export default function Canteen() {
                             <button
                               onClick={() => remove(item.id)}
                               className="h-8 w-8 flex items-center justify-center border border-[var(--color-rule)] text-[var(--color-ink-2)] hover:border-[var(--color-ink)] transition-colors"
-                              aria-label="Remove"
                             >
                               −
                             </button>
-                            <span className="num text-[15px] w-6 text-center">{qty}</span>
+                            <span className="num text-[15px] w-6 text-center">
+                              {qty}
+                            </span>
                             <button
                               onClick={() => add(item.id)}
                               className="h-8 w-8 flex items-center justify-center border border-[var(--color-ink)] bg-[var(--color-ink)] text-white hover:bg-[var(--color-accent)] hover:border-[var(--color-accent)] transition-colors"
-                              aria-label="Add"
                             >
                               +
                             </button>
@@ -369,11 +375,16 @@ export default function Canteen() {
                 <>
                   <ul className="divide-y divide-[var(--color-rule)]">
                     {cartLines.map((l) => (
-                      <li key={l.item.id} className="flex items-start gap-3 px-6 py-4">
+                      <li
+                        key={l.item.id}
+                        className="flex items-start gap-3 px-6 py-4"
+                      >
                         <span className="label num mt-0.5 shrink-0 w-8">
                           {String(l.qty).padStart(2, '0')}×
                         </span>
-                        <span className="flex-1 text-[14px] leading-snug">{l.item.name}</span>
+                        <span className="flex-1 text-[14px] leading-snug">
+                          {l.item.name}
+                        </span>
                         <span className="text-[14px] num">
                           {rupees(l.item.price_cents * l.qty)}
                         </span>
@@ -418,11 +429,12 @@ export default function Canteen() {
                       disabled={submitting}
                       className="btn btn-accent w-full disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {submitting ? 'Placing order…' : `Pay ${rupees(totalCents)} · UPI`}
+                      {submitting
+                        ? 'Placing order…'
+                        : `Pay ${rupees(totalCents)} · UPI`}
                     </button>
                     <p className="mt-3 text-[12px] text-[var(--color-ink-4)] text-center leading-relaxed">
-                      Kitchen starts preparing only after payment. You'll be notified when your
-                      order is ready.
+                      Kitchen starts preparing only after payment.
                     </p>
                   </div>
                 </>
