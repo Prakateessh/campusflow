@@ -607,7 +607,7 @@ export default {
         const result = await env.campusflow_db
           .prepare(`
             SELECT id, facility_id, name, description, price_cents,
-                   prep_time_minutes, category, available, display_order
+                  prep_time_minutes, category, available, display_order, image_url
             FROM canteen_menu
             WHERE facility_id = ? AND available = 1
             ORDER BY display_order, name

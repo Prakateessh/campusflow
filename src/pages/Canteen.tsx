@@ -13,6 +13,7 @@ interface MenuItem {
   prep_time_minutes: number;
   category: string;
   available: number;
+  image_url: string | null;
 }
 
 interface CartLine {
@@ -523,18 +524,31 @@ function CanteenMenu() {
                       key={item.id}
                       className="grid grid-cols-12 gap-4 items-center px-6 py-5"
                     >
-                      <div className="col-span-8 md:col-span-9">
-                        <div className="flex items-center gap-3">
-                          <h3 className="text-[16px]">{item.name}</h3>
-                          <span className="label capitalize">{item.category}</span>
-                        </div>
-                        <p className="mt-1 text-[14px] text-[var(--color-ink-3)] leading-relaxed">
-                          {item.description}
-                        </p>
-                        <div className="mt-2 flex items-center gap-4 text-[13px] text-[var(--color-ink-3)]">
-                          <span className="num">{rupees(item.price_cents)}</span>
-                          <span className="w-1 h-1 bg-[var(--color-ink-4)] rounded-full" />
-                          <span className="num">{item.prep_time_minutes} min</span>
+                      <div className="col-span-8 md:col-span-9 flex items-center gap-4">
+                        {item.image_url && (
+                          <img
+                            src={item.image_url}
+                            alt={item.name}
+                            loading="lazy"
+                            className="h-20 w-20 object-cover shrink-0 border border-[var(--color-rule)]"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-3">
+                            <h3 className="text-[16px]">{item.name}</h3>
+                            <span className="label capitalize">{item.category}</span>
+                          </div>
+                          <p className="mt-1 text-[14px] text-[var(--color-ink-3)] leading-relaxed">
+                            {item.description}
+                          </p>
+                          <div className="mt-2 flex items-center gap-4 text-[13px] text-[var(--color-ink-3)]">
+                            <span className="num">{rupees(item.price_cents)}</span>
+                            <span className="w-1 h-1 bg-[var(--color-ink-4)] rounded-full" />
+                            <span className="num">{item.prep_time_minutes} min</span>
+                          </div>
                         </div>
                       </div>
 
