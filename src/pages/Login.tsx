@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth, getUsers, type DirectoryUser } from '../lib/auth';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -12,7 +12,6 @@ const ROLE_LABEL: Record<string, string> = {
 
 export default function Login() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { user, login } = useAuth();
 
   const [email, setEmail] = useState('');
@@ -23,13 +22,10 @@ export default function Login() {
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
   const [directoryLoading, setDirectoryLoading] = useState(false);
 
-  const from = (location.state as { from?: string })?.from ?? '/';
-
   useEffect(() => {
-    if (user) navigate(from, { replace: true });
-  }, [user, from, navigate]);
+    if (user) navigate('/', { replace: true });
+  }, [user, navigate]);
 
-  // Lazy-load the directory only when the user expands the section
   useEffect(() => {
     if (!showAccounts || directory.length > 0) return;
     let cancelled = false;
@@ -61,7 +57,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate(from, { replace: true });
+      navigate('/', { replace: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Sign in failed.';
       setError(message);
@@ -80,7 +76,6 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-[var(--color-surface)] flex">
 
-      {/* ── Left: form ── */}
       <div className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="w-full max-w-sm">
 
@@ -199,7 +194,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* ── Right: visual panel ── */}
       <div className="hidden lg:flex lg:flex-1 border-l border-[var(--color-rule)] bg-[var(--color-card)] items-center justify-center p-16 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-accent-soft)] via-transparent to-transparent" />
         <div className="absolute -top-32 -right-32 w-[400px] h-[400px] bg-gradient-to-bl from-[var(--color-accent)]/10 to-transparent" />
@@ -215,7 +209,7 @@ export default function Login() {
               { k: 'Labs',    v: 'Equipment, components, supervised slots' },
               { k: 'Canteen', v: 'Pre-order meals, skip the queue' },
               { k: 'Library', v: 'Search, borrow, and renew' },
-              { k: 'Sports',  v: 'Reserve rackets, balls, and gear' },
+              { k: 'Sports',  v: 'Borrow sports equipment' },
               { k: 'Stores',  v: 'Reserve essentials for pickup' },
             ].map((item) => (
               <li key={item.k} className="flex items-baseline justify-between gap-6">

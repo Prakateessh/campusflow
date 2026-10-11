@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import type { ReactElement } from 'react';
-import { AuthProvider } from './lib/auth';
+import { AuthProvider, type Role } from './lib/auth';
 import RequireAuth from './components/RequireAuth';
+import RequireRole from './components/RequireRole';
 import Home from './pages/Home';
 import Facilities from './pages/Facilities';
 import FacilityDetail from './pages/FacilityDetail';
@@ -16,7 +17,21 @@ import AdminQueue from './pages/AdminQueue';
 import Login from './pages/Login';
 import NotFound from './pages/NotFound';
 
-const protect = (el: ReactElement) => <RequireAuth>{el}</RequireAuth>;
+// Roles for each protected route
+const LAB_ROLES: Role[] = ['student', 'faculty', 'technician', 'admin'];
+const REQUEST_ROLES: Role[] = ['student', 'faculty', 'technician', 'admin'];
+const CANTEEN_ROLES: Role[] = ['student', 'faculty', 'service_provider', 'admin'];
+const LIBRARY_ROLES: Role[] = ['student', 'faculty', 'service_provider', 'admin'];
+const SPORTS_ROLES: Role[] = ['student', 'faculty', 'admin'];
+const STORE_ROLES: Role[] = ['student', 'faculty', 'admin'];
+const ASSISTANT_ROLES: Role[] = ['student', 'faculty', 'admin'];
+const ADMIN_ROLES: Role[] = ['faculty', 'technician', 'service_provider', 'admin'];
+
+const guard = (el: ReactElement, allow: Role[]) => (
+  <RequireAuth>
+    <RequireRole allow={allow}>{el}</RequireRole>
+  </RequireAuth>
+);
 
 export default function App() {
   return (
@@ -24,17 +39,17 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={protect(<Home />)} />
-          <Route path="/facilities" element={protect(<Facilities />)} />
-          <Route path="/facilities/:id" element={protect(<FacilityDetail />)} />
-          <Route path="/requests" element={protect(<Requests />)} />
-          <Route path="/requests/:id" element={protect(<RequestDetail />)} />
-          <Route path="/canteen" element={protect(<Canteen />)} />
-          <Route path="/library" element={protect(<Library />)} />
-          <Route path="/sports" element={protect(<Sports />)} />
-          <Route path="/store" element={protect(<Store />)} />
-          <Route path="/assistant" element={protect(<Assistant />)} />
-          <Route path="/admin" element={protect(<AdminQueue />)} />
+          <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
+          <Route path="/facilities" element={guard(<Facilities />, LAB_ROLES)} />
+          <Route path="/facilities/:id" element={guard(<FacilityDetail />, LAB_ROLES)} />
+          <Route path="/requests" element={guard(<Requests />, REQUEST_ROLES)} />
+          <Route path="/requests/:id" element={guard(<RequestDetail />, REQUEST_ROLES)} />
+          <Route path="/canteen" element={guard(<Canteen />, CANTEEN_ROLES)} />
+          <Route path="/library" element={guard(<Library />, LIBRARY_ROLES)} />
+          <Route path="/sports" element={guard(<Sports />, SPORTS_ROLES)} />
+          <Route path="/store" element={guard(<Store />, STORE_ROLES)} />
+          <Route path="/assistant" element={guard(<Assistant />, ASSISTANT_ROLES)} />
+          <Route path="/admin" element={guard(<AdminQueue />, ADMIN_ROLES)} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AuthProvider>

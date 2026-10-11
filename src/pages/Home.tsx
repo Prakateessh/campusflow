@@ -4,14 +4,14 @@ import Layout from '../components/Layout';
 import { useAuth } from '../lib/auth';
 import { getRequests, type RequestListItem } from '../lib/api';
 
-interface ServiceTile {
+interface Tile {
   name: string;
   desc: string;
   to: string;
   image: string;
 }
 
-const ALL_SERVICES: ServiceTile[] = [
+const REQUEST_TILES: Tile[] = [
   { name: 'Lab access', desc: 'Request equipment, components, or a supervised slot.', to: '/facilities', image: '/lab.jpeg' },
   { name: 'Canteen',    desc: 'Pre-order meals for pickup at your chosen time.',     to: '/canteen',    image: '/canteen.jpeg' },
   { name: 'Library',    desc: 'Renew your active loans.',                            to: '/library',    image: '/library.jpeg' },
@@ -19,37 +19,55 @@ const ALL_SERVICES: ServiceTile[] = [
   { name: 'Stores',     desc: 'Reserve stationery and daily essentials.',            to: '/store',      image: '/store.jpeg' },
 ];
 
-function getVisibleServiceNames(role: string, department: string): string[] {
-  if (role === 'admin') return ['Lab access', 'Canteen', 'Library', 'Sports', 'Stores'];
-  if (role === 'student' || role === 'faculty') return ['Lab access', 'Canteen', 'Library', 'Sports', 'Stores'];
-  if (role === 'technician') return ['Lab access'];
-  if (role === 'service_provider') {
-    if (department === 'Canteen') return ['Canteen'];
-    if (department === 'Library') return ['Library'];
-    return [];
-  }
-  return [];
-}
+const QUEUE_TILE: Tile = {
+  name: 'Approval queue',
+  desc: 'Review requests awaiting your decision.',
+  to: '/admin',
+  image: '/lab.jpeg',
+};
+
+const STAFF_TILES: Record<string, Tile> = {
+  technician: {
+    name: 'Approval queue',
+    desc: 'Review and approve lab requests assigned to you.',
+    to: '/admin',
+    image: '/lab.jpeg',
+  },
+  canteen: {
+    name: 'Order queue',
+    desc: 'Prepare incoming canteen orders and mark them ready.',
+    to: '/canteen',
+    image: '/canteen.jpeg',
+  },
+  library: {
+    name: 'Renewals log',
+    desc: 'Recent book renewals from students and faculty.',
+    to: '/library',
+    image: '/library.jpeg',
+  },
+};
 
 export default function Home() {
   const { user } = useAuth();
   const [requests, setRequests] = useState<RequestListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+
+  const isRequesterRole =
+    user?.role === 'student' || user?.role === 'faculty' || user?.role === 'admin';
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isRequesterRole) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
-    setError(null);
 
     getRequests({ user_id: user.id })
       .then((data) => {
         if (!cancelled) setRequests(data);
       })
-      .catch((err) => {
-        if (!cancelled) setError(err.message);
-      })
+      .catch(() => {})
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -57,7 +75,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, isRequesterRole]);
 
   const stats = [
     { label: 'Total',     value: requests.length },
@@ -75,11 +93,37 @@ export default function Home() {
     },
   ];
 
-  const visibleServices = useMemo(() => {
+  const tiles: Tile[] = useMemo(() => {
     if (!user) return [];
-    const names = getVisibleServiceNames(user.role, user.department);
-    return ALL_SERVICES.filter((s) => names.includes(s.name));
-  }, [user?.role, user?.department]);
+    if (user.role === 'student') return REQUEST_TILES;
+    if (user.role === 'faculty') return [...REQUEST_TILES, QUEUE_TILE];
+    if (user.role === 'admin') return [...REQUEST_TILES, QUEUE_TILE];
+    if (user.role === 'technician') return [STAFF_TILES.technician];
+    if (user.role === 'service_provider') {
+      if (user.department === 'Canteen') return [STAFF_TILES.canteen];
+      if (user.department === 'Library') return [STAFF_TILES.library];
+      return [];
+    }
+    return [];
+  }, [user]);
+
+  const gridClass = (() => {
+    if (tiles.length === 1) return 'grid-cols-1';
+    if (tiles.length === 2) return 'grid-cols-1 md:grid-cols-2';
+    if (tiles.length === 3) return 'grid-cols-1 md:grid-cols-3';
+    if (tiles.length === 4) return 'grid-cols-1 md:grid-cols-2';
+    return 'grid-cols-1 md:grid-cols-6';
+  })();
+
+  const spanFor = (index: number, total: number) => {
+    if (total === 1) return 'md:col-span-1';
+    if (total === 2) return 'md:col-span-1';
+    if (total === 3) return 'md:col-span-1';
+    if (total === 4) return 'md:col-span-1';
+    if (total === 6) return 'md:col-span-2';
+    // 5 tiles: 3 up (2-span) + 2 down (3-span)
+    return index < 3 ? 'md:col-span-2' : 'md:col-span-3';
+  };
 
   const roleLabel: Record<string, string> = {
     student: 'Student',
@@ -87,23 +131,6 @@ export default function Home() {
     technician: 'Technician',
     service_provider: 'Service Provider',
     admin: 'Admin',
-  };
-
-  // Grid span classes based on tile count
-  const gridClass =
-    visibleServices.length === 1
-      ? 'grid-cols-1'
-      : visibleServices.length === 2
-      ? 'grid-cols-1 md:grid-cols-2'
-      : 'grid-cols-1 md:grid-cols-6';
-
-  const spanFor = (index: number, total: number) => {
-    if (total === 1) return 'md:col-span-1';
-    if (total === 2) return 'md:col-span-1';
-    if (total === 3) return 'md:col-span-2';
-    if (total === 4) return 'md:col-span-3';
-    // 5 tiles: 3 up, 2 down
-    return index < 3 ? 'md:col-span-2' : 'md:col-span-3';
   };
 
   return (
@@ -127,53 +154,51 @@ export default function Home() {
         </div>
       </section>
 
-      {error && (
-        <section className="pb-8">
-          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3">
-            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+      {isRequesterRole && (
+        <section className="pb-14">
+          <div className="grid grid-cols-2 md:grid-cols-4 border-t border-l border-[var(--color-rule)]">
+            {stats.map((s) => (
+              <div
+                key={s.label}
+                className="bg-[var(--color-card)] border-r border-b border-[var(--color-rule)] px-8 py-10 relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 w-16 h-px bg-gradient-to-r from-[var(--color-accent)] to-transparent" />
+                <span className="label">{s.label}</span>
+                <div className="mt-4 font-display text-4xl md:text-5xl num leading-none">
+                  {loading ? '··' : String(s.value).padStart(2, '0')}
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       )}
 
-      <section className="pb-14">
-        <div className="grid grid-cols-2 md:grid-cols-4 border-t border-l border-[var(--color-rule)]">
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              className="bg-[var(--color-card)] border-r border-b border-[var(--color-rule)] px-8 py-10 relative overflow-hidden"
-            >
-              <div className="absolute top-0 left-0 w-16 h-px bg-gradient-to-r from-[var(--color-accent)] to-transparent" />
-              <span className="label">{s.label}</span>
-              <div className="mt-4 font-display text-4xl md:text-5xl num leading-none">
-                {loading ? '··' : String(s.value).padStart(2, '0')}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {visibleServices.length > 0 && (
+      {tiles.length > 0 && (
         <section className="pb-24">
           <div className="flex items-end justify-between mb-8">
             <div className="flex items-center gap-3">
               <span className="section-rule" />
-              <h2 className="text-2xl md:text-3xl">Services</h2>
+              <h2 className="text-2xl md:text-3xl">
+                {user?.role === 'technician' || user?.role === 'service_provider'
+                  ? 'Your workspace'
+                  : 'Services'}
+              </h2>
             </div>
             <span className="label num">
-              {String(visibleServices.length).padStart(2, '0')} available
+              {String(tiles.length).padStart(2, '0')} available
             </span>
           </div>
 
           <div className={`grid ${gridClass} border-t border-l border-[var(--color-rule)]`}>
-            {visibleServices.map((s, i) => (
+            {tiles.map((t, i) => (
               <Link
-                key={s.name}
-                to={s.to}
-                className={`group relative bg-[var(--color-card)] p-8 border-r border-b border-[var(--color-rule)] transition-colors overflow-hidden min-h-[280px] flex flex-col justify-between ${spanFor(i, visibleServices.length)}`}
+                key={t.name}
+                to={t.to}
+                className={`group relative bg-[var(--color-card)] p-8 border-r border-b border-[var(--color-rule)] transition-colors overflow-hidden min-h-[280px] flex flex-col justify-between ${spanFor(i, tiles.length)}`}
               >
                 <div
                   className="absolute inset-0 bg-cover bg-center opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-                  style={{ backgroundImage: `url(${s.image})` }}
+                  style={{ backgroundImage: `url(${t.image})` }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[var(--color-accent-hover)]/85 via-[var(--color-ink)]/70 to-[var(--color-ink)]/40 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
@@ -188,10 +213,10 @@ export default function Home() {
 
                 <div className="relative z-10">
                   <h3 className="text-xl group-hover:text-white transition-colors">
-                    {s.name}
+                    {t.name}
                   </h3>
                   <p className="mt-3 text-[15px] text-[var(--color-ink-3)] group-hover:text-white/85 leading-relaxed transition-colors">
-                    {s.desc}
+                    {t.desc}
                   </p>
                 </div>
               </Link>

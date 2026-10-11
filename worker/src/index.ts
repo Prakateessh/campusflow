@@ -523,6 +523,10 @@ export default {
 
       // ═══════════════════════════════════════════════════════════
       // GET /api/admin/queue?approver_id=X
+      //   Faculty:    requests they sponsor, status='submitted'
+      //   Technician: requests pending approval from facilities
+      //               in their department's category scope
+      //   Admin:      all non-terminal requests
       // ═══════════════════════════════════════════════════════════
       if (path === '/api/admin/queue' && request.method === 'GET') {
         const approverId = url.searchParams.get('approver_id');
@@ -531,9 +535,9 @@ export default {
         }
 
         const approver = await env.campusflow_db
-          .prepare('SELECT id, role FROM users WHERE id = ?')
+          .prepare('SELECT id, role, department FROM users WHERE id = ?')
           .bind(Number(approverId))
-          .first<{ id: number; role: string }>();
+          .first<{ id: number; role: string; department: string | null }>();
 
         if (!approver) {
           return json({ error: 'Approver not found' }, cors, 404);
@@ -544,6 +548,7 @@ export default {
             r.id, r.kind, r.title, r.status, r.purpose, r.return_by,
             r.created_at, r.submitted_at,
             f.id AS facility_id, f.code AS facility_code, f.name AS facility_name,
+            f.category AS facility_category,
             u.name AS requester_name, u.email AS requester_email,
             s.name AS sponsor_name
           FROM requests r
@@ -555,10 +560,31 @@ export default {
         const params: unknown[] = [];
 
         if (approver.role === 'faculty') {
+          // Only requests where this faculty is the named sponsor
           sql += ' AND r.sponsor_id = ? AND r.status = "submitted"';
           params.push(Number(approverId));
         } else if (approver.role === 'technician') {
+          // Only pending-approval requests from facilities in this technician's
+          // department scope. Department string → facility categories.
+          const DEPT_CATEGORIES: Record<string, string[]> = {
+            'ECE Labs':     ['electronics'],
+            'MECH Labs':    ['mechanical'],
+            'CSE Labs':     ['computing_ai'],
+            'EEE Labs':     ['energy'],
+            'Chemical Labs':['chemical'],
+            'Innovation':   ['innovation'],
+          };
+
+          const categories = DEPT_CATEGORIES[approver.department ?? ''] ?? [];
+
           sql += ' AND r.status = "pending_approval"';
+
+          if (categories.length > 0) {
+            const placeholders = categories.map(() => '?').join(',');
+            sql += ` AND f.category IN (${placeholders})`;
+            params.push(...categories);
+          }
+          // If no scope mapping, fall back to showing all pending (admin-like)
         } else if (approver.role === 'admin') {
           sql += ' AND r.status NOT IN ("completed","rejected","cancelled")';
         } else {
@@ -1061,6 +1087,95 @@ Assistant: Intelligent Electronics System Laboratory (C-02) has ESP32 boards, Lo
             : (aiResponse as any)?.response ?? 'I could not generate a response.';
 
         return json({ reply }, cors);
+      }
+
+            // ═══════════════════════════════════════════════════════════
+      // GET /api/canteen/queue
+      //   Full pending order list with items for the kitchen view
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/canteen/queue' && request.method === 'GET') {
+        const orders = await env.campusflow_db
+          .prepare(`
+            SELECT
+              co.request_id, co.queue_position, co.pickup_at,
+              co.paid_at, co.prep_started_at, co.prep_completed_at,
+              r.title, r.status,
+              u.name AS requester_name, u.email AS requester_email
+            FROM canteen_orders co
+            JOIN requests r ON r.id = co.request_id
+            JOIN users u ON u.id = r.requester_id
+            WHERE co.prep_completed_at IS NULL
+            ORDER BY co.queue_position ASC
+            LIMIT 50
+          `)
+          .all();
+
+        // Fetch items for each order
+        const ordersWithItems = await Promise.all(
+          (orders.results ?? []).map(async (o: any) => {
+            const items = await env.campusflow_db
+              .prepare(`
+                SELECT quantity, notes
+                FROM request_items
+                WHERE request_id = ?
+              `)
+              .bind(o.request_id)
+              .all();
+            return { ...o, items: items.results ?? [] };
+          }),
+        );
+
+        return json({ queue: ordersWithItems }, cors);
+      }
+
+            // ═══════════════════════════════════════════════════════════
+      // POST /api/canteen/order/:id/ready
+      // ═══════════════════════════════════════════════════════════
+      const canteenReadyMatch = path.match(/^\/api\/canteen\/order\/(\d+)\/ready$/);
+      if (canteenReadyMatch && request.method === 'POST') {
+        const requestId = Number(canteenReadyMatch[1]);
+        const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+        await env.campusflow_db
+          .prepare(`
+            UPDATE canteen_orders
+            SET prep_completed_at = ?, ready_notified_at = ?
+            WHERE request_id = ?
+          `)
+          .bind(now, now, requestId)
+          .run();
+
+        await env.campusflow_db
+          .prepare(`UPDATE requests SET status = 'completed', completed_at = ? WHERE id = ?`)
+          .bind(now, requestId)
+          .run();
+
+        return json({ success: true }, cors);
+      }
+
+            // ═══════════════════════════════════════════════════════════
+      // GET /api/library/pending-renewals
+      //   Recent renewals for the library staff view
+      // ═══════════════════════════════════════════════════════════
+      if (path === '/api/library/pending-renewals' && request.method === 'GET') {
+        const result = await env.campusflow_db
+          .prepare(`
+            SELECT
+              r.id AS request_id,
+              r.title,
+              r.status,
+              r.created_at,
+              u.name AS requester_name,
+              u.email AS requester_email
+            FROM requests r
+            JOIN users u ON u.id = r.requester_id
+            WHERE r.kind = 'library'
+            ORDER BY r.created_at DESC
+            LIMIT 50
+          `)
+          .all();
+
+        return json({ renewals: result.results }, cors);
       }
 
       // ═══════════════════════════════════════════════════════════
