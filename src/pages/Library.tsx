@@ -4,6 +4,148 @@ import { useAuth } from '../lib/auth';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
+export default function Library() {
+  const { user } = useAuth();
+
+  const isLibraryStaff =
+    user?.role === 'service_provider' && user?.department === 'Library';
+
+  if (isLibraryStaff) return <LibraryRenewalsLog />;
+  return <LibraryMyLoans />;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LIBRARY STAFF — Renewals log
+// ═══════════════════════════════════════════════════════════════
+interface RenewalEntry {
+  request_id: number;
+  title: string;
+  status: string;
+  created_at: string;
+  requester_name: string;
+  requester_email: string;
+}
+
+function LibraryRenewalsLog() {
+  const [renewals, setRenewals] = useState<RenewalEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/library/pending-renewals`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? 'Failed to load renewals');
+      }
+      const data = await res.json();
+      setRenewals(data.renewals ?? []);
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to load renewals');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    reload();
+    const timer = setInterval(reload, 20_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatDateTime = (iso: string) => {
+    const d = new Date(iso.replace(' ', 'T'));
+    return d.toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  return (
+    <Layout>
+      <section className="pt-14 pb-10">
+        <div className="flex items-end justify-between">
+          <div className="flex items-center gap-3">
+            <span className="section-rule" />
+            <h1 className="text-2xl md:text-3xl">Renewals log</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="label num">
+              {loading ? '···' : `${String(renewals.length).padStart(2, '0')} total`}
+            </span>
+            <button
+              onClick={reload}
+              className="label hover:text-[var(--color-accent)] transition-colors"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+        <p className="mt-3 text-[13px] text-[var(--color-ink-3)]">
+          Recent book renewals across all users.
+        </p>
+      </section>
+
+      <section className="pb-24">
+        {error && (
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">Loading…</span>
+          </div>
+        ) : renewals.length === 0 ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">No renewals yet</span>
+          </div>
+        ) : (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
+            <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
+              <span className="col-span-2 label">ID</span>
+              <span className="col-span-5 label">Renewal</span>
+              <span className="col-span-3 label">User</span>
+              <span className="col-span-2 label text-right">When</span>
+            </div>
+
+            <div className="divide-y divide-[var(--color-rule)]">
+              {renewals.map((r) => (
+                <div
+                  key={r.request_id}
+                  className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 px-6 py-4 items-center"
+                >
+                  <span className="md:col-span-2 label num">
+                    R-{String(r.request_id).padStart(4, '0')}
+                  </span>
+                  <span className="md:col-span-5 text-[15px]">{r.title}</span>
+                  <div className="md:col-span-3">
+                    <p className="text-[14px]">{r.requester_name}</p>
+                    <p className="mt-0.5 text-[11px] text-[var(--color-ink-4)] num truncate">
+                      {r.requester_email}
+                    </p>
+                  </div>
+                  <span className="md:col-span-2 md:text-right text-[12px] text-[var(--color-ink-3)] num">
+                    {formatDateTime(r.created_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    </Layout>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STUDENTS / FACULTY / TECHNICIAN / ADMIN — My loans
+// ═══════════════════════════════════════════════════════════════
 interface Loan {
   loan_id: number;
   book_id: number;
@@ -16,7 +158,7 @@ interface Loan {
   renewals: number;
 }
 
-export default function Library() {
+function LibraryMyLoans() {
   const { user } = useAuth();
 
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -28,17 +170,14 @@ export default function Library() {
     if (!user) return;
     setLoading(true);
     setError(null);
-
     try {
       const res = await fetch(
         `${API_BASE}/api/library/loans?user_id=${user.id}`,
       );
-
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? 'Failed to load loans');
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? 'Failed to load loans');
       }
-
       const data = await res.json();
       setLoans(data.loans ?? []);
     } catch (err: any) {
@@ -62,15 +201,12 @@ export default function Library() {
       const res = await fetch(`${API_BASE}/api/library/renew`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          loan_id: loan.loan_id,
-        }),
+        body: JSON.stringify({ user_id: user.id, loan_id: loan.loan_id }),
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? 'Renewal failed');
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? 'Renewal failed');
       }
 
       await reload();
@@ -81,7 +217,6 @@ export default function Library() {
     }
   };
 
-  // Days until due. Negative = overdue.
   const daysLeft = (dueDate: string) => {
     const due = new Date(dueDate.replace(' ', 'T'));
     const today = new Date();
@@ -103,7 +238,6 @@ export default function Library() {
 
   return (
     <Layout>
-      {/* ═══════ HEADING ═══════ */}
       <section className="pt-14 pb-10">
         <div className="flex items-end justify-between">
           <div className="flex items-center gap-3">
@@ -124,7 +258,6 @@ export default function Library() {
         )}
       </section>
 
-      {/* ═══════ BODY ═══════ */}
       <section className="pb-24">
         {error && (
           <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
@@ -145,7 +278,6 @@ export default function Library() {
           </div>
         ) : (
           <div className="border border-[var(--color-rule)] bg-[var(--color-card)]">
-            {/* Desktop header row */}
             <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-low)]">
               <span className="col-span-5 label">Book</span>
               <span className="col-span-3 label">Shelf</span>
@@ -165,7 +297,6 @@ export default function Library() {
                     key={loan.loan_id}
                     className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 px-6 py-5 items-center transition-colors hover:bg-[var(--color-surface-low)]"
                   >
-                    {/* Title + author */}
                     <div className="md:col-span-5">
                       <h3 className="text-[16px] leading-snug">{loan.title}</h3>
                       <p className="mt-1 text-[13px] text-[var(--color-ink-3)]">
@@ -176,7 +307,6 @@ export default function Library() {
                       </p>
                     </div>
 
-                    {/* Shelf code */}
                     <div className="md:col-span-3">
                       <span className="label md:hidden">Shelf</span>
                       <p className="mt-1 md:mt-0 text-[14px] num text-[var(--color-ink-3)]">
@@ -184,7 +314,6 @@ export default function Library() {
                       </p>
                     </div>
 
-                    {/* Due date + urgency */}
                     <div className="md:col-span-2">
                       <span className="label md:hidden">Due</span>
                       <p className="mt-1 md:mt-0 text-[14px] num">
@@ -205,7 +334,6 @@ export default function Library() {
                       </p>
                     </div>
 
-                    {/* Renew button */}
                     <div className="md:col-span-2 md:text-right">
                       <button
                         onClick={() => handleRenew(loan)}

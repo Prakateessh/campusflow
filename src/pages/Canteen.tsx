@@ -20,9 +20,226 @@ interface CartLine {
   qty: number;
 }
 
+interface QueueOrder {
+  request_id: number;
+  queue_position: number;
+  pickup_at: string;
+  paid_at: string | null;
+  prep_started_at: string | null;
+  prep_completed_at: string | null;
+  title: string;
+  status: string;
+  requester_name: string;
+  requester_email: string;
+  items: Array<{ quantity: number; notes: string | null }>;
+}
+
 const CATEGORY_ORDER = ['All', 'breakfast', 'lunch', 'dinner', 'snacks', 'bakery', 'beverages', 'icecream'];
 
 export default function Canteen() {
+  const { user } = useAuth();
+
+  // ── Role check: canteen staff see the queue, everyone else sees the menu
+  const isCanteenStaff =
+    user?.role === 'service_provider' && user?.department === 'Canteen';
+
+  if (isCanteenStaff) return <CanteenQueue />;
+  return <CanteenMenu />;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CANTEEN STAFF — Order queue
+// ═══════════════════════════════════════════════════════════════
+function CanteenQueue() {
+  const [queue, setQueue] = useState<QueueOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [marking, setMarking] = useState<number | null>(null);
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/canteen/queue`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? 'Failed to load queue');
+      }
+      const data = await res.json();
+      setQueue(data.queue ?? []);
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to load queue');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    reload();
+    // Refresh every 15 seconds while on this page
+    const timer = setInterval(reload, 15_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const markReady = async (requestId: number) => {
+    if (marking) return;
+    setMarking(requestId);
+    try {
+      const res = await fetch(`${API_BASE}/api/canteen/order/${requestId}/ready`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? 'Failed to mark ready');
+      }
+      await reload();
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to mark ready');
+    } finally {
+      setMarking(null);
+    }
+  };
+
+  const formatTime = (iso: string | null) => {
+    if (!iso) return '—';
+    return iso.slice(11, 16);
+  };
+
+  const minutesAgo = (iso: string | null) => {
+    if (!iso) return '';
+    const past = new Date(iso.replace(' ', 'T')).getTime();
+    const mins = Math.floor((Date.now() - past) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m ago`;
+  };
+
+  return (
+    <Layout>
+      <section className="pt-14 pb-10">
+        <div className="flex items-end justify-between">
+          <div className="flex items-center gap-3">
+            <span className="section-rule" />
+            <h1 className="text-2xl md:text-3xl">Order queue</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="label num">
+              {loading ? '···' : `${String(queue.length).padStart(2, '0')} active`}
+            </span>
+            <button
+              onClick={reload}
+              className="label hover:text-[var(--color-accent)] transition-colors"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+        <p className="mt-3 text-[13px] text-[var(--color-ink-3)]">
+          Prepare orders in queue order. Mark ready when the item is on the counter.
+        </p>
+      </section>
+
+      <section className="pb-24">
+        {error && (
+          <div className="border-l-2 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)] px-4 py-3 mb-6">
+            <span className="text-[13px] text-[var(--color-accent)]">{error}</span>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">Loading…</span>
+          </div>
+        ) : queue.length === 0 ? (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] py-24 text-center">
+            <span className="label">Queue is clear</span>
+            <p className="mt-3 text-[13px] text-[var(--color-ink-3)]">
+              New orders will appear here automatically.
+            </p>
+          </div>
+        ) : (
+          <div className="border border-[var(--color-rule)] bg-[var(--color-card)] divide-y divide-[var(--color-rule)]">
+            {queue.map((o) => {
+              const isReady = o.prep_completed_at !== null;
+              const isPrepping = o.prep_started_at !== null && !isReady;
+              return (
+                <div
+                  key={o.request_id}
+                  className="grid grid-cols-12 gap-4 px-6 py-5 items-center"
+                >
+                  {/* Queue number */}
+                  <div className="col-span-2 md:col-span-1">
+                    <span className="font-display text-3xl num leading-none">
+                      #{String(o.queue_position).padStart(2, '0')}
+                    </span>
+                  </div>
+
+                  {/* Order details */}
+                  <div className="col-span-10 md:col-span-6">
+                    <p className="text-[16px]">{o.title}</p>
+                    <p className="mt-1 text-[13px] text-[var(--color-ink-3)]">
+                      {o.requester_name}
+                    </p>
+                    {o.items.length > 0 && (
+                      <ul className="mt-2 space-y-0.5">
+                        {o.items.map((it, i) => (
+                          <li
+                            key={i}
+                            className="text-[13px] text-[var(--color-ink-2)]"
+                          >
+                            <span className="num text-[var(--color-ink-3)] mr-2">
+                              {String(it.quantity).padStart(2, '0')}×
+                            </span>
+                            {it.notes}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {/* Timing */}
+                  <div className="col-span-6 md:col-span-3">
+                    <span className="label">Pickup</span>
+                    <p className="mt-1 text-[15px] num">
+                      {formatTime(o.pickup_at)}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-[var(--color-ink-4)]">
+                      Paid {minutesAgo(o.paid_at)}
+                    </p>
+                  </div>
+
+                  {/* Action */}
+                  <div className="col-span-6 md:col-span-2 md:text-right">
+                    {isReady ? (
+                      <span className="label">Ready</span>
+                    ) : (
+                      <button
+                        onClick={() => markReady(o.request_id)}
+                        disabled={marking === o.request_id}
+                        className="btn btn-accent text-sm disabled:opacity-50"
+                      >
+                        {marking === o.request_id
+                          ? '···'
+                          : isPrepping
+                          ? 'Mark ready'
+                          : 'Start now'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </Layout>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STUDENTS / FACULTY / ADMIN — Order menu
+// ═══════════════════════════════════════════════════════════════
+function CanteenMenu() {
   const { user } = useAuth();
 
   const [menu, setMenu] = useState<MenuItem[]>([]);

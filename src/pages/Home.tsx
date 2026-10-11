@@ -11,13 +11,40 @@ interface Tile {
   image: string;
 }
 
-const REQUEST_TILES: Tile[] = [
-  { name: 'Lab access', desc: 'Request equipment, components, or a supervised slot.', to: '/facilities', image: '/lab.jpeg' },
-  { name: 'Canteen',    desc: 'Pre-order meals for pickup at your chosen time.',     to: '/canteen',    image: '/canteen.jpeg' },
-  { name: 'Library',    desc: 'Renew your active loans.',                            to: '/library',    image: '/library.jpeg' },
-  { name: 'Sports',     desc: 'Borrow sports equipment.',                            to: '/sports',     image: '/sports.jpeg' },
-  { name: 'Stores',     desc: 'Reserve stationery and daily essentials.',            to: '/store',      image: '/store.jpeg' },
-];
+const LAB_TILE: Tile = {
+  name: 'Lab access',
+  desc: 'Request equipment, components, or a supervised slot.',
+  to: '/facilities',
+  image: '/lab.jpeg',
+};
+
+const CANTEEN_TILE: Tile = {
+  name: 'Canteen',
+  desc: 'Pre-order meals for pickup at your chosen time.',
+  to: '/canteen',
+  image: '/canteen.jpeg',
+};
+
+const LIBRARY_TILE: Tile = {
+  name: 'Library',
+  desc: 'Renew your active loans.',
+  to: '/library',
+  image: '/library.jpeg',
+};
+
+const SPORTS_TILE: Tile = {
+  name: 'Sports',
+  desc: 'Borrow sports equipment.',
+  to: '/sports',
+  image: '/sports.jpeg',
+};
+
+const STORE_TILE: Tile = {
+  name: 'Stores',
+  desc: 'Reserve stationery and daily essentials.',
+  to: '/store',
+  image: '/store.jpeg',
+};
 
 const QUEUE_TILE: Tile = {
   name: 'Approval queue',
@@ -26,26 +53,44 @@ const QUEUE_TILE: Tile = {
   image: '/lab.jpeg',
 };
 
-const STAFF_TILES: Record<string, Tile> = {
-  technician: {
-    name: 'Approval queue',
-    desc: 'Review and approve lab requests assigned to you.',
-    to: '/admin',
-    image: '/lab.jpeg',
-  },
-  canteen: {
-    name: 'Order queue',
-    desc: 'Prepare incoming canteen orders and mark them ready.',
-    to: '/canteen',
-    image: '/canteen.jpeg',
-  },
-  library: {
-    name: 'Renewals log',
-    desc: 'Recent book renewals from students and faculty.',
-    to: '/library',
-    image: '/library.jpeg',
-  },
+const CANTEEN_QUEUE_TILE: Tile = {
+  name: 'Order queue',
+  desc: 'Prepare incoming canteen orders and mark them ready.',
+  to: '/canteen',
+  image: '/canteen.jpeg',
 };
+
+const LIBRARY_QUEUE_TILE: Tile = {
+  name: 'Renewals log',
+  desc: 'Recent book renewals from students and faculty.',
+  to: '/library',
+  image: '/library.jpeg',
+};
+
+function getTiles(role: string, department: string): Tile[] {
+  if (role === 'student') {
+    return [LAB_TILE, CANTEEN_TILE, LIBRARY_TILE, SPORTS_TILE, STORE_TILE];
+  }
+  if (role === 'faculty') {
+    return [LAB_TILE, CANTEEN_TILE, LIBRARY_TILE, STORE_TILE, QUEUE_TILE];
+  }
+  if (role === 'technician') {
+    return [CANTEEN_TILE, LIBRARY_TILE, STORE_TILE, QUEUE_TILE];
+  }
+  if (role === 'service_provider') {
+    if (department === 'Canteen') {
+      return [CANTEEN_QUEUE_TILE];
+    }
+    if (department === 'Library') {
+      return [LIBRARY_QUEUE_TILE];
+    }
+    return [];
+  }
+  if (role === 'admin') {
+    return [LAB_TILE, CANTEEN_TILE, LIBRARY_TILE, SPORTS_TILE, STORE_TILE, QUEUE_TILE];
+  }
+  return [];
+}
 
 export default function Home() {
   const { user } = useAuth();
@@ -93,18 +138,9 @@ export default function Home() {
     },
   ];
 
-  const tiles: Tile[] = useMemo(() => {
+  const tiles = useMemo(() => {
     if (!user) return [];
-    if (user.role === 'student') return REQUEST_TILES;
-    if (user.role === 'faculty') return [...REQUEST_TILES, QUEUE_TILE];
-    if (user.role === 'admin') return [...REQUEST_TILES, QUEUE_TILE];
-    if (user.role === 'technician') return [STAFF_TILES.technician];
-    if (user.role === 'service_provider') {
-      if (user.department === 'Canteen') return [STAFF_TILES.canteen];
-      if (user.department === 'Library') return [STAFF_TILES.library];
-      return [];
-    }
-    return [];
+    return getTiles(user.role, user.department);
   }, [user]);
 
   const gridClass = (() => {
@@ -121,7 +157,6 @@ export default function Home() {
     if (total === 3) return 'md:col-span-1';
     if (total === 4) return 'md:col-span-1';
     if (total === 6) return 'md:col-span-2';
-    // 5 tiles: 3 up (2-span) + 2 down (3-span)
     return index < 3 ? 'md:col-span-2' : 'md:col-span-3';
   };
 

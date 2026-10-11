@@ -69,7 +69,12 @@ export default function Header() {
     navigate('/login');
   };
 
-  // Role-based nav visibility
+  // ── Role-based visibility ──
+  const canRequest =
+    user?.role === 'student' ||
+    user?.role === 'faculty' ||
+    user?.role === 'admin';
+
   const canSeeFacilities =
     user?.role === 'student' ||
     user?.role === 'faculty' ||
@@ -85,6 +90,14 @@ export default function Header() {
     user?.role === 'faculty' ||
     user?.role === 'technician' ||
     user?.role === 'admin';
+
+  const roleLabel: Record<string, string> = {
+    student: 'Student',
+    faculty: 'Faculty',
+    technician: 'Technician',
+    service_provider: 'Service Provider',
+    admin: 'Admin',
+  };
 
   return (
     <header className="bg-[var(--color-card)] sticky top-0 z-40">
@@ -145,7 +158,7 @@ export default function Header() {
               <div className="hidden md:flex flex-col items-end leading-tight">
                 <span className="text-[14px] text-[var(--color-ink)]">{user.name}</span>
                 <span className="label text-[10px] text-[var(--color-ink-4)] mt-0.5">
-                  {user.department}
+                  {roleLabel[user.role] ?? user.role} · {user.department}
                 </span>
               </div>
               <div className="h-10 w-10 bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent-hover)] flex items-center justify-center transition-transform group-hover:scale-105">
@@ -164,17 +177,21 @@ export default function Header() {
                   </p>
                 </div>
 
-                <Link
-                  to="/requests"
-                  className="block px-4 py-3 text-[14px] hover:bg-[var(--color-surface-low)] transition-colors"
-                >
-                  My requests
-                </Link>
+                {canRequest && (
+                  <Link
+                    to="/requests"
+                    className="block px-4 py-3 text-[14px] hover:bg-[var(--color-surface-low)] transition-colors"
+                  >
+                    My requests
+                  </Link>
+                )}
 
                 {canSeeQueue && (
                   <Link
                     to="/admin"
-                    className="block px-4 py-3 text-[14px] hover:bg-[var(--color-surface-low)] transition-colors border-t border-[var(--color-rule)]"
+                    className={`block px-4 py-3 text-[14px] hover:bg-[var(--color-surface-low)] transition-colors ${
+                      canRequest ? 'border-t border-[var(--color-rule)]' : ''
+                    }`}
                   >
                     Approval queue
                   </Link>
